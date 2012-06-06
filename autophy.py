@@ -13,9 +13,9 @@ class Database():
         con = sqlite3.connect(self.dbname)
         return con
 
-    def create_sampling_matrix(self, name, description, excluded_taxa=None, excluded_phlawdruns=None, \
-                                   excluded_sequences=None, included_taxa = None, included_phlawdruns = None, \
-                                   included_sequences = None):
+    def create_matrix(self, name, description, matrix_type, excluded_taxa = None, excluded_phlawdruns = None, \
+                          excluded_sequences = None, included_taxa = None, included_phlawdruns = None, \
+                          included_sequences = None, friendly = False):
         # exclusion is evaluated after inclusion, with the consequence that any sequence in any excluded set
         # will not be saved in the matrix regardless of any included sets it may be in.
 
@@ -32,8 +32,14 @@ class Database():
                 seqs_to_include += [r[0] for r in cur.fetchall()]
         
         if hasattr(included_taxa,"__iter__"):
-            for taxon_id in included_taxa:
-                cur.execute("SELECT id FROM sequences WHERE taxon_id = ?;",(taxon_id,))
+#            taxon_ncbi_ids = list()
+#            for taxon_id in included_taxa:
+#                cur.execute("SELECT ncbi_id FROM taxonomy WHERE id = ?;",(taxon_id,))
+#                r = cur.fetchone()
+#                taxon_ncbi_ids.append(r[0])
+
+            for ncbi_id in included_taxa:
+                cur.execute("SELECT id FROM sequences WHERE ncbi_id = ?;",(ncbi_id,))
                 seqs_to_include += [r[0] for r in cur.fetchall()]
         
         if not hasattr(included_sequences,"__iter__") and not hasattr(included_phlawdruns,"__iter__") and not \
@@ -47,30 +53,62 @@ class Database():
             seqs_to_exclude = excluded_sequences
         
         if hasattr(excluded_phlawdruns, "__iter__"):
-            for phlawdru_id in excluded_phlawdruns:
+            for phlawdrun_id in excluded_phlawdruns:
                 cur.execute("SELECT id FROM sequences WhERE phlawdrun_id = ?;",(phlawdrun_id,))
                 seqs_to_exclude += [r[0] for r in cur.fetchall()]
 
         if hasattr(excluded_taxa,"__iter__"):
-            for taxon_id in excluded_taxa:
-                cur.execute("SELECT id FROM sequences WHERE taxon_id = ?;",(taxon_id,))
+            for ncbi_id in excluded_taxa:
+                cur.execute("SELECT id FROM sequences WHERE ncbi_id = ?;",(ncbi_id,))
                 seqs_to_exclude += [r[0] for r in cur.fetchall()]
 
         seqs_to_include = list(set(seqs_to_include) - set(seqs_to_exclude))
 
         if len(seqs_to_include) > 0:
+            # first lookup this matrix_type to be sure it exists
+            cur.execute("SELECT id FROM matrix_type WHERE name = ?;", (matrix_type,))
+            r = cur.fetchone()
+            try:
+                type_id = r[0]
+            except TypeError:
+                message = "That matrix type could not be found."
+                raise NameError(message)
+
             # create a new matrix record, and recover its id
-            cur.execute("INSERT INTO matrix(name, description) VALUES (?,?);",(name, description))
+            query_string = "INSERT INTO matrix(name, description, matrix_type_id) VALUES (?,?,?);"
+            values = (name, description, type_id)
+            cur.execute(query_string,values)
             cur.execute("SELECT last_insert_rowid();")
             matrix_id = cur.fetchone()[0]
 
             for seq_id in seqs_to_include:
-                cur.pexecute("INSERT INTO sequence_matrix_map (sequence_id, matrix_id) VALUES (?,?);", \
+                cur.pexecute("INSERT INTO sequence_matrix_include_map (sequence_id, matrix_id) VALUES (?,?);", \
                                  (seq_id, matrix_id))
+            con.commit()
+            new_matrix = self.retrieve_matrix_by_id(matrix_id)
+        else:
+            new_matrix = None
 
+        con.close()
+        return new_matrix
+
+    def delete_matrix_by_id(self, matrix_id):
+        con = sqlite3.connect(self.dbname)
+        cur = con.cursor()
+
+        cur.execute("DELETE FROM matrix WHERE id = ?;", (matrix_id,))
         con.commit()
+        con.close()
+        self.update_matrix_list()
 
-        return matrix_id
+    def delete_matrix_by_name(self, matrix_name):
+        con = sqlite3.connect(self.dbname)
+        cur = con.cursor()
+
+        cur.execute("DELETE FROM matrix WHERE name = ?;", (matrix_name,))
+        con.commit()
+        con.close()
+        self.update_matrix_list()
 
 ##############################################################
 #
@@ -81,9 +119,35 @@ class Database():
 #
 ##############################################################
 
-    def install_taxonomy(self):
-        print "Not implemented due to speed. Use the phlawd executable to build a sequence database " \
-            "and then use recorddb.database.wipe() to clear it of all non-taxonomic data."
+    def import_matrix_from_csv(self, path_to_csv_file, name, description, matrix_type, taxon_name_column_header = "taxon"):
+
+        con = sqlite3.connect(self.dbname)
+        cur = con.cursor()
+
+        # open the csv file and get the phlawdrun names (columns)
+        csvfile = open(path_to_csv_file, "rb")
+        csv_matrix = csv.DictReader(csvfile)
+        colnames = set(csv_matrix.fieldnames) - set((taxon_name_column_header,))
+
+        # gather all the sequence ids to be included in this matrix
+        seq_ids = list()
+        for row in csv_matrix:
+            # the ncbi_id is recorded as the first part of the taxon name; we can extract it with:
+            ncbi_id = row[taxon_name_column_header].split("_")[0]
+            for phlawdrun in colnames:
+                # similarly, the phlawdrun db id is recorded as the *last* part of the column name:
+                phlawdrun_id = phlawdrun.rsplit("_",1)[1]
+                if int(row[phlawdrun]) == 1:
+                    cur.execute("SELECT id FROM sequences WHERE phlawdrun_id == ? AND ncbi_id == ?;", \
+                                    (phlawdrun_id, ncbi_id))
+                    r = cur.fetchone()
+                    seq_ids.append(r[0])
+        
+        # create the matrix
+        new_matrix = self.create_matrix(name, description, matrix_type, included_sequences = seq_ids)
+
+        con.close()
+        return new_matrix
 
     def import_phlawdruns_from_dir(self, dir_to_import, config_file_suffix = ".phlawd"):
         # point this to a directory containing successfully assembled phlawd config files 
@@ -249,7 +313,7 @@ class Database():
             cur.execute("CREATE TABLE matrix_type (" \
                     "id INTEGER PRIMARY KEY, " \
                     "name TEXT, " \
-                    "description);")
+                    "description TEXT);")
             con.commit()
 	except sqlite3.OperationalError as error:
             error_tokens = error.message.split()
@@ -263,8 +327,8 @@ class Database():
                 ("default", "the most inclusive matrix, consisting of all sequences from all phlawdruns. " \
                      "there can be only one."),
                 ("intermediate", "a matrix used for sampling optimization, often corresponding to a single " \
-                     "clade or locus. used to generate sampling matrices (for decisivator) and bootstrap " \
-                     "sets (for roguenarok). not used for final tree-searching"), \
+                     "clade or locus. used to generate sampling matrices (e.g. for decisivator) or set of " \
+                     "trees (e.g. for roguenarok). not used for final tree-searching"), \
                 ("optimized", "an intermediate matrix that has been fully subsampled to exclude taxa that " \
                      "may be problematic for downstream tree-searches. the set of optimized matrices is used " \
                      "to generate the final matrix"), \
@@ -337,6 +401,10 @@ class Database():
 
 	con.close()
 
+    def install_taxonomy(self):
+        print "Not implemented due to speed. Use the phlawd executable to build a sequence database " \
+            "and then use autophy.wipe(database_filename) clear it of all non-taxonomic data."
+
     def retrieve_matrix_by_name(self, matrix_name):
         the_matrix = Matrix(self.dbname, matrix_name=matrix_name)
         return the_matrix
@@ -348,6 +416,22 @@ class Database():
     def retrieve_phlawdrun_by_id(self, phlawdrun_id):
         the_phlawdrun = PhlawdRun(self.dbname, phlawdrun_id=phlawdrun_id)
         return the_phlawdrun
+
+    def update_default_matrix(self):
+        # currently quite incomplete...
+        try:
+            cur_default_matrix = self.retrieve_matrix_by_name("default")            
+        except NameError:
+            n_taxa_default = 0
+
+        # check if n_taxa in current default matrix is the same as current n_taxa in db
+        if n_taxa_default != 0:
+            pass
+
+        # check if n_phlawdruns in current default matrix is the same as current n_phlawdruns in db
+
+        # if either are different, rebuild default matrix
+            
 
     def update_matrix_list(self):
         con = sqlite3.connect(self.dbname)
@@ -374,8 +458,11 @@ class Database():
         self.tables = [row[0] for row in cur.fetchall()]
         con.close()
 
-    def wipe(self):
-        con = sqlite3.connect(self.dbname)
+    def wipe(self,dbname = None):
+        if dbname == None:
+            dbname = self.dbname
+
+        con = sqlite3.connect(dbname)
         cur = con.cursor(sqlite3_extensions.safecursor)
 
         # in case of foreign key constraints, we may need to make more than one pass
@@ -394,6 +481,249 @@ class Database():
 
         self.install_empty_recorddb_tables()
         self.update_table_list()
+
+class Matrix():
+    def __init__(self, dbname, matrix_id=None, matrix_name=None):
+        self.dbname = dbname
+        self.matrix_id = matrix_id
+        self.matrix_name = matrix_name
+
+        # default values for matrix presence/absence and text manip
+        self.absent_code = "0"
+        self.present_code = "1"
+        self.r_char = "_"
+        self.empty_char = "-"
+        self.alignment_suffix = "_alignment"
+        self.sampling_matrix_suffix = "_sampling_matrix"
+        self.partition_suffix = "_partitions"
+
+        con = sqlite3.connect(dbname)
+        cur = con.cursor()
+        
+        # if we got a name, check if it matches a matrix, get that matrix's db id 
+        if self.matrix_name is not None:
+            cur.execute("SELECT id FROM matrix where name = ?;",(self.matrix_name,))
+            r = cur.fetchone()
+            if r != None:
+                self.matrix_id = r[0]
+
+        if self.matrix_id is not None:
+            cur.execute("SELECT name FROM matrix where id = ?;",(self.matrix_id,))
+            r = cur.fetchone()
+            if r != None:
+                self.matrix_name = r[0]
+
+        con.close()
+        
+        if self.matrix_id == None:
+            message = "Could not find that matrix."
+            raise NameError(message)
+
+        # get info on taxa phlawdruns referenced by this matrix
+        self.update_taxa()
+        self.n_taxa = len(self.taxa)
+        self.update_phlawdruns()
+        self.n_phlawdruns = len(self.phlawdruns)
+
+        # extract information about partitions in the alignment defined by this matrix
+        self.update_partition_info()
+
+        # set default values for resource-intensive properties that aren't created automatically
+        self.matrix_file_path = None
+        self.sampling_matrix = None
+
+    def export_alignment(self, path_prefix=""):
+        # writes an alignment containing all sequences referenced by this matrix to a file.
+        # format is "relaxed phylip" (i.e. RAxML), also writes a RAxML partition file.
+        # does not yet contain support for excluding flagged sequences
+
+        # open a file to write alignment
+        temp_path = self.matrix_name + self.alignment_suffix + ".phy"
+        #### note, this will overwrite any file, and defaults to the current directory,
+        #### as do other matrix output methods. might want to fix this 
+        if os.path.exists(path_prefix):
+            temp_path = path_prefix.strip("/") + "/" + temp_path
+        self.alignment_file_path = os.path.realpath(temp_path)
+        outfile = open(self.alignment_file_path, mode="wb")
+        print "Writing alignment to: " + self.alignment_file_path
+
+        # write header line for phylip format
+        outfile.write("%s %s\n" % (self.n_taxa, self.n_sites))
+
+        con = sqlite3.connect(self.dbname)
+        cur = con.cursor()
+
+        # concatenate aligned sequences and write them to the alignment file
+        i = 0
+        report_interval = 1000
+        for taxon, ncbi_id in [(uid, nid) for uid, nid, name in self.taxa]:
+            line = taxon + " "
+
+            # gather all sequences for this taxon
+            cur.execute("SELECT phlawdrun.filename, phlawdrun.id, sequences.seq_aligned FROM " \
+                            "sequences, phlawdrun WHERE sequences.ncbi_id = ? " \
+                            "AND sequences.phlawdrun_id = phlawdrun.id;", (ncbi_id,))
+            sequences = dict([(pfname + "_" + str(pid), seq) for pfname, pid, seq in cur.fetchall()])
+
+            # for each partition, see if we have a matching sequence, if not then make an empty one
+            for part_name, part_length in self.partitions:
+                 if part_name in sequences.keys():
+                     s = sequences[part_name]
+                 else:
+                     s = self.empty_char * part_length
+                 line += s
+
+            outfile.write(line+"\n")
+
+            i += 1
+            if i % report_interval == 0:
+                print "Processed %s taxa, %s more to go." % (i, self.n_taxa - i)
+
+        outfile.close()
+        
+        self.export_partition_file(path_prefix)
+
+    def export_to_csv(self, path_prefix=""):
+        # writes the sampling matrix calculated by the update_sampling_matrix method to a file
+
+        if self.sampling_matrix is None:
+            self.update_sampling_matrix()
+
+        # open a file to write
+        temp_path = self.matrix_name + self.sampling_matrix_suffix + ".csv"
+        if os.path.exists(path_prefix):
+            temp_path = path_prefix.strip("/") + "/" + temp_path
+
+        self.matrix_file_path = os.path.realpath(temp_path)
+        outfile = open(self.matrix_file_path, mode="wb")
+
+        # write info from sampling matrix
+        print "Writing matrix to : " + outfile.name
+        column_names = ["taxon"] + sorted(zip(*self.phlawdruns)[0])
+        csvwriter = csv.DictWriter(outfile,column_names)
+        csvwriter.writeheader()
+        i = 0
+        for taxon, values in self.sampling_matrix.iteritems():
+            rowdata = dict(values)
+            rowdata["taxon"] = taxon
+            csvwriter.writerow(rowdata)
+
+        outfile.close()
+
+    def export_partition_file(self, path_prefix):
+        # writes a RAxML format partition file
+        
+        self.update_partition_info()
+
+        # open a file to write partitions
+        temp_path = self.matrix_name + self.partition_suffix + ".part"
+        if os.path.exists(path_prefix):
+            temp_path = path_prefix.strip("/") + "/" + temp_path
+        self.partition_file_path = os.path.realpath(temp_path)
+        partfile = open(self.partition_file_path, mode="wb")
+
+        # write each partition's info to file
+        last_position = 0
+        for part_name, part_length in self.partitions:
+            start = last_position + 1
+            end = last_position + part_length
+            line = "DNA, %s = %s-%s\n" % (part_name, start, end)
+            partfile.write(line)
+            last_position = end
+
+        partfile.close()
+
+    def update_partition_info(self):
+        con = sqlite3.connect(self.dbname)
+        cur = con.cursor()
+        self.partitions = list()
+        for phlawdrun_uid, phlawdrun_id in [(p_uid, p_dbid) for p_uid, p_dbid, p_name in self.phlawdruns]:
+            cur.execute("SELECT seq_aligned FROM sequences WHERE sequences.id IN (" \
+                "SELECT MIN(id) FROM sequences WHERE sequences.phlawdrun_id = ?);", (phlawdrun_id,))
+            part_length = len(cur.fetchone()[0])
+            
+            self.partitions.append((phlawdrun_uid, part_length))
+
+        con.close()
+
+        self.n_sites = sum(zip(*self.partitions)[1])
+        self.partitions.sort()
+
+    def update_phlawdruns(self):
+        # generates a list of tuples containing information about the phlawdruns referenced by this matrix.
+
+        con = sqlite3.connect(self.dbname)
+        cur = con.cursor()
+
+        # get info for all phlawdruns represented by seqs present in this matrix
+        cur.execute("SELECT id, filename FROM phlawdrun WHERE phlawdrun.id IN (" \
+            "SELECT DISTINCT phlawdrun_id FROM sequences WHERE sequences.id IN (" \
+            "SELECT sequence_id FROM sequence_matrix_include_map WHERE matrix_id = ?));", (self.matrix_id,))
+
+        self.phlawdruns = [(p_filename + self.r_char + str(p_db_id), p_db_id, p_filename) for p_db_id, \
+                               p_filename in cur.fetchall()]
+
+        con.close()
+
+    def update_sampling_matrix(self):
+        # creates a large 2-d dict containing sampling information for this matrix. each "row" in
+        # the dict corresponds to a taxon, and contains a dict with "columns" that contain
+        # presence/absence codings for each phlawdrun. the keys of the dict are unique identifiers
+        # consisting of taxa/phlawdrun names concatenated with their ncbi_id or dbid, respectively
+
+        con = sqlite3.connect(self.dbname)
+        cur = con.cursor()
+
+        # extract unique ids stored in the first position in each tuple in the taxa and phlawdruns lists
+        taxon_uids = zip(*self.taxa)[0]
+        phlawdrun_uids = zip(*self.phlawdruns)[0]
+
+        # create empty matrix: taxon by phlawdrun
+        empty_row = dict(zip(phlawdrun_uids, [self.absent_code] * self.n_phlawdruns))
+        # we have to deepcopy the rows individually to keep them from referencing the same object
+        all_rows = map(deepcopy, [empty_row] * self.n_taxa)
+        self.sampling_matrix = dict(zip(taxon_uids, all_rows))
+
+        i = 0
+        report_interval = 1000
+        for taxon, ncbi_id in [(uid, nid) for uid, nid, name in self.taxa]:
+
+            # gather sampling information from the db 
+            cur.execute("SELECT phlawdrun.filename, phlawdrun.id FROM phlawdrun, sequences WHERE " \
+                "phlawdrun.id = sequences.phlawdrun_id AND sequences.ncbi_id = ?;", (ncbi_id,))
+            runs_present = [p[0] + self.r_char + str(p[1]) for p in cur.fetchall()]
+
+            # fill "cells" in matrix dict according to sequences present
+            for phlawdrun in runs_present:
+                self.sampling_matrix[taxon][phlawdrun] = self.present_code
+
+            i += 1
+            if i % report_interval == 0:
+                print "Processed %s tip taxa. %s to go." % (i, self.n_taxa - i)
+
+        con.close()
+
+    def update_taxa(self):
+        # generates a list of tuples containing information about all taxa referenced by this matrix.
+
+        con = sqlite3.connect(self.dbname)
+        cur = con.cursor()
+
+        # get info for all taxa represented by sequences present in this matrix
+        cur.execute("SELECT ncbi_id, name FROM taxonomy WHERE " \
+            "name_class = 'scientific name' AND taxonomy.ncbi_id IN (" \
+            "SELECT DISTINCT ncbi_id FROM sequences WHERE sequences.id IN (" \
+            "SELECT sequence_id FROM sequence_matrix_include_map WHERE matrix_id = ?));", (self.matrix_id,))
+
+        self.taxa = list()
+        for t in cur.fetchall():
+            t_ncbi_id = t[0]
+            # replace non-alphanumeric strings with underscores
+            t_name = self.r_char.join(re.sub(r"[" + string.punctuation + "\s]+"," ",t[1]).split())
+            t_unique_id = str(t_ncbi_id) + self.r_char + t_name
+            self.taxa.append((t_unique_id, t_ncbi_id, t_name))
+
+        con.close()        
 
 class PhlawdRun():
     def __init__(self, dbname, phlawdrun_id):
@@ -568,244 +898,139 @@ class PhlawdRun_Source():
             message = "Could not access the excludefile at %s" % self.excludefile_path
             raise IOError(message)
 
-class Matrix():
-    def __init__(self, dbname, matrix_id=None, matrix_name=None):
-        self.dbname = dbname
-        self.matrix_id = matrix_id
-        self.matrix_name = matrix_name
+class Taxonomy():
+    def __init__(self, db_fname):
+        self.dbname = db_fname
 
-        # default values for matrix presence/absence and text manip
-        self.absent_code = "0"
-        self.present_code = "1"
-        self.r_char = "_"
-        self.empty_char = "-"
-        self.alignment_suffix = "_alignment"
-        self.sampling_matrix_suffix = "_sampling_matrix"
-        self.partition_suffix = "_partitions"
+    def get_taxon_by_name(self, name, name_class = "scientific name"):
 
-        con = sqlite3.connect(dbname)
+        con = sqlite3.connect(self.dbname)
         cur = con.cursor()
+
+        cur.execute("SELECT ncbi_id FROM taxonomy WHERE name = ? AND name_class = ?;", (name, name_class))
+        r = cur.fetchone()
         
-        # if we got a name, check if it matches a matrix, get that matrix's db id 
-        if self.matrix_name is not None:
-            cur.execute("SELECT id FROM matrix where name = ?;",(self.matrix_name,))
+        try:
+            ncbi_id = r[0] 
+            taxon = Taxon(self.dbname, ncbi_id)
+        except TypeError:
+            raise NameError("No taxon by that name could be found.")
+
+        return taxon
+
+    def get_taxon_by_ncbi_id(self, ncbi_id):
+        taxon = Taxon(self.dbname, ncbi_id)
+        return taxon
+
+class Taxon():
+
+    def __init__(self, db_fname, ncbi_id):
+        self.dbname = db_fname
+        self.ncbi_id = ncbi_id
+
+        con = sqlite3.connect(self.dbname)
+        cur = con.cursor()
+
+        cur.execute("SELECT name, node_rank, left_value, right_value FROM taxonomy WHERE " \
+                        "ncbi_id == ? AND name_class == 'scientific name';",(self.ncbi_id,))
+        r = cur.fetchone()
+        self.scientific_name = r[0]
+        self.node_rank = r[1]
+        self.left_value = r[2]
+        self.right_value = r[3]
+
+        con.close()
+
+    def get_immediate_children(self, name_class = "scientific name"):
+
+        con = sqlite3.connect(self.dbname)
+        cur = con.cursor()
+
+        if name_class == "all":
+            # get all children regardless of name class
+            cur.execute("SELECT name, ncbi_id FROM taxonomy WHERE parent_ncbi_id == ?;", (self.ncbi_id,))
+        else:
+            # get only children matching the elected name class (default 'scientific name')
+            cur.execute("SELECT name, ncbi_id FROM taxonomy WHERE " \
+                            "parent_ncbi_id = ? AND name_class LIKE ?;", (self.ncbi_id, name_class))
+        children = [(c_name, c_ncbi_id) for c_name, c_ncbi_id in cur.fetchall()]
+
+        con.close()
+        return children
+
+    def get_depth_n_children_by_rank(self, rank, name_class = "scientific name"):
+
+        con = sqlite3.connect(self.dbname)
+        cur = con.cursor()
+
+        # get all records of desired rank
+        cur.execute("SELECT name, ncbi_id, left_value, right_value FROM taxonomy WHERE " \
+                        "node_rank == ? AND name_class == ?;", (rank, name_class))
+        records = cur.fetchall()
+
+        # record only records that are children of this taxon
+        children = list()
+        for r in records:
+            this_name = r[0]
+            this_ncbi_id = r[1]
+            lval = r[2]
+            rval = r[3]
+            if lval > self.left_value and rval < self.right_value:
+                children.append((this_name, this_ncbi_id))
+
+        con.close()
+        return children
+
+    def get_newick_subtree(self):
+        # calls a recursive function that writes a newick string for
+        # the subtree subtended by this taxon 
+
+        def get_newick_str(this_ncbi_id, dbname):
+            # post-order traverse; generate a newick taxonomy subtree
+            con = sqlite3.connect(dbname)
+            cur = con.cursor()
+
+            # get the name and rank for this taxon
+            cur.execute("SELECT name, node_rank FROM taxonomy WHERE " \
+                            "ncbi_id = ? AND name_class = 'scientific name';", (this_ncbi_id,))
             r = cur.fetchone()
-            if r != None:
-                self.matrix_id = r[0]
+            this_name = r[0]
+            this_node_rank = r[1]
 
-        if self.matrix_id is not None:
-            cur.execute("SELECT name FROM matrix where id = ?;",(self.matrix_id,))
-            r = cur.fetchone()
-            if r != None:
-                self.matrix_name = r[0]
+            # print the taxon name if we are at family level or above (ignores nodes with no rank)
+            accepted_ranks = ("family", "superfamily", "suborder", "infraorder", "order", \
+                                  "subclass", "class", "superclass", "subphylum", "phylum", \
+                                  "superphylum", "subkingdom", "kindgom", "superkingdom")
+            if this_node_rank in accepted_ranks:
+                print this_name
 
-        con.close()
-        
-        if self.matrix_id == None:
-            message = "Could not find that matrix."
-            raise NameError(message)
+            # get children of the current taxon
+            this_taxon = Taxon(dbname, this_ncbi_id)
+            children = this_taxon.get_immediate_children()
+            n_children = len(children)
 
-        # get info on taxa phlawdruns referenced by this matrix
-        self.update_taxa()
-        self.n_taxa = len(self.taxa)
-        self.update_phlawdruns()
-        self.n_phlawdruns = len(self.phlawdruns)
+            # build the newick string
+            this_string = ""
+            if n_children > 0:
+                # if we are at an internal node, the newick string is a comma-delimited
+                # string containing all the children's strings, flanked with parentheses
+                i = 0
+                this_string += "("
+                for child_name, child_ncbi_id in children:
+                    this_string += get_newick_str(child_ncbi_id, dbname)
+                    if i < n_children - 1:
+                        this_string += ","
+                    i += 1
+                this_string += ")"
+                # record the name for this internal node
+                this_string += "'" + this_name + "'"
+            else:
+                # if we are at a tip, the newick string is just the tip name
+                this_string += "'" + this_name + "'"
 
-        # extract information about partitions in the alignment defined by this matrix
-        self.update_partition_info()
+            con.close()
+            return this_string
 
-        # set default values for resource-intensive properties that aren't created automatically
-        self.matrix_file_path = None
-        self.sampling_matrix = None
+        tree_str = get_newick_str(self.ncbi_id, self.dbname)
+        return tree_str
 
-    def update_taxa(self):
-        # generates a list of tuples containing information about all taxa referenced by this matrix.
-
-        con = sqlite3.connect(self.dbname)
-        cur = con.cursor()
-
-        # get info for all taxa represented by sequences present in this matrix
-        cur.execute("SELECT ncbi_id, name FROM taxonomy WHERE " \
-            "name_class = 'scientific name' AND taxonomy.ncbi_id IN (" \
-            "SELECT DISTINCT ncbi_id FROM sequences WHERE sequences.id IN (" \
-            "SELECT sequence_id FROM sequence_matrix_map WHERE matrix_id = ?));", (self.matrix_id,))
-
-        self.taxa = list()
-        for t in cur.fetchall():
-            t_ncbi_id = t[0]
-            # replace non-alphanumeric strings with underscores
-            t_name = self.r_char.join(re.sub(r"[" + string.punctuation + "\s]+"," ",t[1]).split())
-            t_unique_id = str(t_ncbi_id) + self.r_char + t_name
-            self.taxa.append((t_unique_id, t_ncbi_id, t_name))
-
-        con.close()        
-
-    def update_phlawdruns(self):
-        # generates a list of tuples containing information about the phlawdruns referenced by this matrix.
-
-        con = sqlite3.connect(self.dbname)
-        cur = con.cursor()
-
-        # get info for all phlawdruns represented by seqs present in this matrix
-        cur.execute("SELECT id, filename FROM phlawdrun WHERE phlawdrun.id IN (" \
-            "SELECT DISTINCT phlawdrun_id FROM sequences WHERE sequences.id IN (" \
-            "SELECT sequence_id FROM sequence_matrix_map WHERE matrix_id = ?));", (self.matrix_id,))
-
-        self.phlawdruns = [(p_filename + self.r_char + str(p_db_id), p_db_id, p_filename) for p_db_id, \
-                               p_filename in cur.fetchall()]
-
-        con.close()
-
-    def update_sampling_matrix(self):
-        # creates a large 2-d dict containing sampling information for this matrix. each "row" in
-        # the dict corresponds to a taxon, and contains a dict with "columns" that contain
-        # presence/absence codings for each phlawdrun. the keys of the dict are unique identifiers
-        # consisting of taxa/phlawdrun names concatenated with their ncbi_id or dbid, respectively
-
-        con = sqlite3.connect(self.dbname)
-        cur = con.cursor()
-
-        # extract unique ids stored in the first position in each tuple in the taxa and phlawdruns lists
-        taxon_uids = zip(*self.taxa)[0]
-        phlawdrun_uids = zip(*self.phlawdruns)[0]
-
-        # create empty matrix: taxon by phlawdrun
-        empty_row = dict(zip(phlawdrun_uids, [self.absent_code] * self.n_phlawdruns))
-        # we have to deepcopy the rows individually to keep them from referencing the same object
-        all_rows = map(deepcopy, [empty_row] * self.n_taxa)
-        self.sampling_matrix = dict(zip(taxon_uids, all_rows))
-
-        i = 0
-        report_interval = 1000
-        for taxon, ncbi_id in [(uid, nid) for uid, nid, name in self.taxa]:
-
-            # gather sampling information from the db 
-            cur.execute("SELECT phlawdrun.filename, phlawdrun.id FROM phlawdrun, sequences WHERE " \
-                "phlawdrun.id = sequences.phlawdrun_id AND sequences.ncbi_id = ?;", (ncbi_id,))
-            runs_present = [p[0] + self.r_char + str(p[1]) for p in cur.fetchall()]
-
-            # fill "cells" in matrix dict according to sequences present
-            for phlawdrun in runs_present:
-                self.sampling_matrix[taxon][phlawdrun] = self.present_code
-
-            i += 1
-            if i % report_interval == 0:
-                print "Processed %s tip taxa. %s to go." % (i, self.n_taxa - i)
-
-        con.close()
-
-    def export_to_csv(self, path_prefix=""):
-        # writes the sampling matrix calculated by the update_sampling_matrix method to a file
-
-        if self.sampling_matrix is None:
-            self.update_sampling_matrix()
-
-        # open a file to write
-        temp_path = self.matrix_name + self.sampling_matrix_suffix + ".csv"
-        if os.path.exists(path_prefix):
-            temp_path = path_prefix.strip("/") + "/" + temp_path
-
-        self.matrix_file_path = os.path.realpath(temp_path)
-        outfile = open(self.matrix_file_path, mode="wb")
-
-        # write info from sampling matrix
-        print "Writing matrix to : " + outfile.name
-        column_names = ["taxon"] + sorted(zip(*self.phlawdruns)[0])
-        csvwriter = csv.DictWriter(outfile,column_names)
-        csvwriter.writeheader()
-        i = 0
-        for taxon, values in self.sampling_matrix.iteritems():
-            rowdata = dict(values)
-            rowdata["taxon"] = taxon
-            csvwriter.writerow(rowdata)
-
-        outfile.close()
-
-    def update_partition_info(self):
-        con = sqlite3.connect(self.dbname)
-        cur = con.cursor()
-        self.partitions = list()
-        for phlawdrun_uid, phlawdrun_id in [(p_uid, p_dbid) for p_uid, p_dbid, p_name in self.phlawdruns]:
-            cur.execute("SELECT seq_aligned FROM sequences WHERE sequences.id IN (" \
-                "SELECT MIN(id) FROM sequences WHERE sequences.phlawdrun_id = ?);", (phlawdrun_id,))
-            part_length = len(cur.fetchone()[0])
-            
-            self.partitions.append((phlawdrun_uid, part_length))
-
-        con.close()
-
-        self.n_sites = sum(zip(*self.partitions)[1])
-        self.partitions.sort()
-
-    def export_alignment(self, path_prefix=""):
-        # writes an alignment containing all sequences referenced by this matrix to a file.
-        # format is "relaxed phylip" (i.e. RAxML), also writes a RAxML partition file.
-        # does not yet contain support for excluding flagged sequences
-
-        # open a file to write alignment
-        temp_path = self.matrix_name + self.alignment_suffix + ".phy"
-        #### note, this will overwrite any file, and defaults to the current directory,
-        #### as do other matrix output methods. should fix this 
-        if os.path.exists(path_prefix):
-            temp_path = path_prefix.strip("/") + "/" + temp_path
-        self.alignment_file_path = os.path.realpath(temp_path)
-        outfile = open(self.alignment_file_path, mode="wb")
-
-        # write header line for phylip format
-        outfile.write("%s %s\n" % (self.n_taxa, self.n_sites))
-
-        con = sqlite3.connect(self.dbname)
-        cur = con.cursor()
-
-        # concatenate aligned sequences and write them to the alignment file
-        i = 0
-        report_interval = 1000
-        for taxon, ncbi_id in [(uid, nid) for uid, nid, name in self.taxa]:
-            line = taxon + " "
-
-            # gather all sequences for this taxon
-            cur.execute("SELECT phlawdrun.filename, phlawdrun.id, sequences.seq_aligned FROM " \
-                            "sequences, phlawdrun WHERE sequences.ncbi_id = ? " \
-                            "AND sequences.phlawdrun_id = phlawdrun.id;", (ncbi_id,))
-            sequences = dict([(pfname + "_" + str(pid), seq) for pfname, pid, seq in cur.fetchall()])
-
-            # for each partition, see if we have a matching sequence, if not then make an empty one
-            for part_name, part_length in self.partitions:
-                 if part_name in sequences.keys():
-                     s = sequences[part_name]
-                 else:
-                     s = self.empty_char * part_length
-                 line += s
-
-            outfile.write(line+"\n")
-
-            i += 1
-            if i % report_interval == 0:
-                print "Processed %s taxa, %s more to go." % (i, self.n_taxa - i)
-
-        outfile.close()
-        
-        self.export_partition_file(path_prefix)
-
-    def export_partition_file(self, path_prefix):
-        # writes a RAxML format partition file
-        
-        self.update_partition_info()
-
-        # open a file to write partitions
-        temp_path = self.matrix_name + self.partition_suffix + ".part"
-        if os.path.exists(path_prefix):
-            temp_path = path_prefix.strip("/") + "/" + temp_path
-        self.partition_file_path = os.path.realpath(temp_path)
-        partfile = open(self.partition_file_path, mode="wb")
-
-        # write each partition's info to file
-        last_position = 0
-        for part_name, part_length in self.partitions:
-            start = last_position + 1
-            end = last_position + part_length
-            line = "DNA, %s = %s-%s\n" % (part_name, start, end)
-            partfile.write(line)
-            last_position = end
-
-        partfile.close()

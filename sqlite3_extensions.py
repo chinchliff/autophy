@@ -51,13 +51,13 @@ class safecursor(sqlite3.Cursor):
 	    if error_tokens[0] == "table" and error_tokens[3] == "exists":
                 print "Table %s already exists." % error_tokens[1]
             else:
-                raise
+                raise error
 
 	except sqlite3.IntegrityError as error:
             if error.message == "column name is not unique":
                 print "Add record failed: %s" % error.message
             else:
-                raise
+                raise error
 
     def pexecutemany(self,statements):
         if hasattr(statements, "__iter__"):
