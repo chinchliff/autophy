@@ -1,0 +1,12 @@
+*.py~
+*.pyc
+.*
+*#
+gbpln.db
+*.phy
+*.csv
+*.part
+*.tre
+src_cody/*
+src_stephen/*
+taxdata/*
