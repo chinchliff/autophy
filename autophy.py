@@ -78,7 +78,7 @@ class Database():
             if overwrite:
                 cur.execute("SELECT id FROM matrix WHERE name == ?;", (name,))
                 try:
-                    preexisting_id = cur.fetchone()[0]:
+                    preexisting_id = cur.fetchone()[0]
                     cur.execute("DELETE FROM matrix WHERE id == ?;", (preexisting_id,))
                 except IndexError:
                     pass
