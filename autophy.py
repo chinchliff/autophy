@@ -15,7 +15,7 @@ class Database():
 
     def create_matrix(self, name, description, matrix_type, excluded_taxa = None, excluded_phlawdruns = None, \
                           excluded_sequences = None, included_taxa = None, included_phlawdruns = None, \
-                          included_sequences = None, friendly = False):
+                          included_sequences = None, friendly = False, overwrite = False):
         # exclusion is evaluated after inclusion, with the consequence that any sequence in any excluded set
         # will not be saved in the matrix regardless of any included sets it may be in.
 
@@ -74,6 +74,15 @@ class Database():
                 message = "That matrix type could not be found."
                 raise NameError(message)
 
+            # remove preexisting matrix if desired
+            if overwrite:
+                cur.execute("SELECT id FROM matrix WHERE name == ?;", (name,))
+                try:
+                    preexisting_id = cur.fetchone()[0]:
+                    cur.execute("DELETE FROM matrix WHERE id == ?;", (preexisting_id,))
+                except IndexError:
+                    pass
+
             # create a new matrix record, and recover its id
             query_string = "INSERT INTO matrix(name, description, matrix_type_id) VALUES (?,?,?);"
             values = (name, description, type_id)
@@ -81,6 +90,7 @@ class Database():
             cur.execute("SELECT last_insert_rowid();")
             matrix_id = cur.fetchone()[0]
 
+            # add sequences
             for seq_id in seqs_to_include:
                 cur.pexecute("INSERT INTO sequence_matrix_include_map (sequence_id, matrix_id) VALUES (?,?);", \
                                  (seq_id, matrix_id))
