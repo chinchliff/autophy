@@ -1,12 +1,16 @@
 import sqlite3, time
 
+secs_minute = 60.0
+
 def patient_commit(dbcon, max_time=300, wait_interval=5):
+    # if the database is locked, re-attempt commits for the specified time before quitting
+    global secs_minute
     success = False
     time_waited = 0
     while not success:
         if time_waited > max_time:
             raise sqlite3.OperationalError("Database has been locked for over %s minutes. Quitting." \
-                                               % (max_time / 60.0))
+                                               % (max_time / secs_minute))
         try:
             dbcon.commit()
             success = True
@@ -17,12 +21,14 @@ def patient_commit(dbcon, max_time=300, wait_interval=5):
                 time_waited += wait_interval
 
 def patient_execute(dbcur, query, values = None, max_time=300, wait_interval=5):
+    # if the database is locked, re-attempt the query execute for the specified time before quitting
+    global secs_minute
     success = False
     time_waited = 0
     while not success:
         if time_waited > max_time:
             raise sqlite3.OperationalError("Database has been locked for over %s minutes. Quitting." \
-                                               % (max_time / 60.0))
+                                               % (max_time / secs_minute))
         try:
             if values == None:
                 dbcur.execute(query)
@@ -37,7 +43,8 @@ def patient_execute(dbcur, query, values = None, max_time=300, wait_interval=5):
                 time_waited += wait_interval
 
 class safecursor(sqlite3.Cursor):      
-# protected execute methods catch benign exceptions to prevent program halts
+    # protected execute methods catch benign exceptions to prevent program halts
+    # this class can be passed to the sqlite3.cursor() instance to inherit these methods
 
     def pexecute(self, statement, values = None):
         try:

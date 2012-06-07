@@ -148,14 +148,12 @@ class Database():
         con.close()
         self.update_matrix_list()
 
-##############################################################
+#################################################################
 #
-#   question: will we need methods to delete things from the
-#   recorddb or will we just rebuild it each time to update
-#   it? depending on how we implement flags, deleting things
-#   could get tricky, though rebuilding does not seem less so
+#   question: how will we handle deleting things while retaining
+#   information about flagged sequences?
 #
-##############################################################
+#################################################################
 
     def import_matrix_from_csv(self, path_to_csv_file, name, description, matrix_type, \
                                    taxon_name_column_header = "taxon", **kwargs):
