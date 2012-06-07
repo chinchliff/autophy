@@ -14,10 +14,21 @@ class Database():
         return con
 
     def create_matrix(self, name, description, matrix_type, excluded_taxa = None, excluded_phlawdruns = None, \
-                          excluded_sequences = None, exclusion_reason = "", included_taxa = None, \
-                          included_phlawdruns = None, included_sequences = None, friendly = False, overwrite = False):
+                          excluded_sequences = None, exclude_criterion = "", included_taxa = None, \
+                          included_phlawdruns = None, included_sequences = None, parent_id = None, date = None, \
+                          friendly = False, overwrite = False):
+        #####################################################################################################
+        #
         # exclusion is evaluated after inclusion, with the consequence that any sequence in any excluded set
         # will not be saved in the matrix regardless of any included sets it may be in.
+        #
+        # exclude sequences will be recorded in the sequence_matrix_exclude_map table. an exclusion criterion
+        # matching a known criterion may optionally be specified.
+        #
+        ####################################################################################################
+
+        if date == None:
+            date = time.time()
 
         con = sqlite3.connect(self.dbname)
         cur = con.cursor(sqlite3_extensions.safecursor)
@@ -84,8 +95,8 @@ class Database():
                     pass
 
             # create a new matrix record, and recover its id
-            query_string = "INSERT INTO matrix(name, description, matrix_type_id) VALUES (?,?,?);"
-            values = (name, description, type_id)
+            query_string = "INSERT INTO matrix(name, description, matrix_type_id, parent_id, date) VALUES (?,?,?,?,?);"
+            values = (name, description, type_id, parent_id, date)
             cur.execute(query_string,values)
             cur.execute("SELECT last_insert_rowid();")
             matrix_id = cur.fetchone()[0]
@@ -97,18 +108,18 @@ class Database():
             con.commit()
 
             # validate the exclusion criterion if one was provided
-            cur.execute("SELECT id FROM exclude_criterion WHERE name == ?;", (exclusion_reason,))
+            cur.execute("SELECT id FROM exclude_criterion WHERE name == ?;", (exclude_criterion,))
             r = cur.fetchone()
             try:
-                exclusion_criterion_id = r[0]
+                exclude_criterion_id = r[0]
             except TypeError:
                 pass
 
             # record excluded sequences
             for seq_id in seqs_to_exclude:
                 cur.pexecute("INSERT INTO sequence_matrix_exclude_map (sequence_id, matrix_id, " \
-                                 "exclusion_criterion_id) VALUES (?,?,?);", \
-                                 (seq_id, matrix_id, exclusion_criterion_id))
+                                 "exclude_criterion_id) VALUES (?,?,?);", \
+                                 (seq_id, matrix_id, exclude_criterion_id))
             con.commit()
 
             new_matrix = self.retrieve_matrix_by_id(matrix_id)
