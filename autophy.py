@@ -14,8 +14,8 @@ class Database():
         return con
 
     def create_matrix(self, name, description, matrix_type, excluded_taxa = None, excluded_phlawdruns = None, \
-                          excluded_sequences = None, included_taxa = None, included_phlawdruns = None, \
-                          included_sequences = None, friendly = False, overwrite = False):
+                          excluded_sequences = None, exclusion_reason = "", included_taxa = None, \
+                          included_phlawdruns = None, included_sequences = None, friendly = False, overwrite = False):
         # exclusion is evaluated after inclusion, with the consequence that any sequence in any excluded set
         # will not be saved in the matrix regardless of any included sets it may be in.
 
@@ -90,12 +90,29 @@ class Database():
             cur.execute("SELECT last_insert_rowid();")
             matrix_id = cur.fetchone()[0]
 
-            # add sequences
+            # add included sequences
             for seq_id in seqs_to_include:
                 cur.pexecute("INSERT INTO sequence_matrix_include_map (sequence_id, matrix_id) VALUES (?,?);", \
                                  (seq_id, matrix_id))
             con.commit()
+
+            # validate the exclusion criterion if one was provided
+            cur.execute("SELECT id FROM exclude_criterion WHERE name == ?;", (exclusion_reason,))
+            r = cur.fetchone()
+            try:
+                exclusion_criterion_id = r[0]
+            except TypeError:
+                pass
+
+            # record excluded sequences
+            for seq_id in seqs_to_exclude:
+                cur.pexecute("INSERT INTO sequence_matrix_exclude_map (sequence_id, matrix_id, " \
+                                 "exclusion_criterion_id) VALUES (?,?,?);", \
+                                 (seq_id, matrix_id, exclusion_criterion_id))
+            con.commit()
+
             new_matrix = self.retrieve_matrix_by_id(matrix_id)
+
         else:
             new_matrix = None
 
@@ -129,7 +146,8 @@ class Database():
 #
 ##############################################################
 
-    def import_matrix_from_csv(self, path_to_csv_file, name, description, matrix_type, taxon_name_column_header = "taxon", **kwargs):
+    def import_matrix_from_csv(self, path_to_csv_file, name, description, matrix_type, \
+                                   taxon_name_column_header = "taxon", **kwargs):
 
         con = sqlite3.connect(self.dbname)
         cur = con.cursor()
@@ -712,6 +730,23 @@ class Matrix():
                 print "Processed %s tip taxa. %s to go." % (i, self.n_taxa - i)
 
         con.close()
+
+    def get_included_sequence_ids(self):
+        con = sqlite3.connect(self.dbname)
+        cur = con.cursor()
+
+        cur.execute("SELECT sequence_id FROM sequence_matrix_include_map WHERE matrix_id = ?;", (self.matrix_id,))
+
+        included_sequence_ids = list()
+        for row in cur.fetchall():
+            try:
+                seq_id = row[0]
+            except TypeError:
+                pass
+            included_sequence_ids.append(seq_id)
+
+        con.close()
+        return included_sequence_ids
 
     def update_taxa(self):
         # generates a list of tuples containing information about all taxa referenced by this matrix.
