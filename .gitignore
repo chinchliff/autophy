@@ -4,9 +4,11 @@
 *#
 gbpln.db
 *.phy
+*.log
 *.csv
 *.part
 *.tre
 src_cody/*
 src_stephen/*
 taxdata/*
+temp/*
