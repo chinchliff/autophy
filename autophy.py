@@ -80,7 +80,7 @@ class Database():
                 try:
                     preexisting_id = cur.fetchone()[0]
                     cur.execute("DELETE FROM matrix WHERE id == ?;", (preexisting_id,))
-                except IndexError:
+                except TypeError:
                     pass
 
             # create a new matrix record, and recover its id
@@ -129,7 +129,7 @@ class Database():
 #
 ##############################################################
 
-    def import_matrix_from_csv(self, path_to_csv_file, name, description, matrix_type, taxon_name_column_header = "taxon"):
+    def import_matrix_from_csv(self, path_to_csv_file, name, description, matrix_type, taxon_name_column_header = "taxon", **kwargs):
 
         con = sqlite3.connect(self.dbname)
         cur = con.cursor()
@@ -154,7 +154,7 @@ class Database():
                     seq_ids.append(r[0])
         
         # create the matrix
-        new_matrix = self.create_matrix(name, description, matrix_type, included_sequences = seq_ids)
+        new_matrix = self.create_matrix(name, description, matrix_type, included_sequences = seq_ids, **kwargs)
 
         con.close()
         return new_matrix
