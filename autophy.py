@@ -9,6 +9,28 @@ class Database():
         self.update_matrix_list()
         self.update_phlawdrun_list()
 
+    def combine_matrices(self, matrix_ids, **kwargs):
+        # given an iterable of matrix ids, extract their included sequence ids
+        # and combine them into a single matrix
+
+#        con = sqlite3.connect(self.dbname)
+#        cur = con.cursor()
+
+        seq_ids_to_include = list()
+        for this_id in matrix_ids:
+            this_matrix = Matrix(self.dbname, matrix_id = this_id)
+            seq_ids_to_include += this_matrix.get_included_sequence_ids()
+
+#        print len(seq_ids_to_include)
+
+        new_matrix = self.create_matrix(included_sequences = seq_ids_to_include, **kwargs)
+
+#        for seq_id in new_matrix.get_included_sequence_ids():
+#            seq = Sequence(self.dbname, seq_id)
+#            print seq.taxon_name
+
+        return new_matrix
+
     def connection(self):
         con = sqlite3.connect(self.dbname)
         return con
@@ -26,7 +48,7 @@ class Database():
         # exclude sequences will be recorded in the sequence_matrix_exclude_map table. an exclusion criterion
         # matching a known criterion may optionally be specified.
         #
-        ####################################################################################################
+        #####################################################################################################
 
         if date == None:
             date = time.time()
@@ -88,13 +110,8 @@ class Database():
 
             # remove preexisting matrix if desired
             if overwrite:
-                cur.execute("SELECT id FROM matrix WHERE name == ?;", (name,))
-                try:
-                    preexisting_id = cur.fetchone()[0]
-                    cur.execute("DELETE FROM matrix WHERE id == ?;", (preexisting_id,))
-                except TypeError:
-                    pass
-
+                self.remove_matrix_by_name(name)
+ 
             # create a new matrix record, and recover its id
             query_string = "INSERT INTO matrix(name, description, matrix_type_id, parent_id, date) VALUES (?,?,?,?,?);"
             values = (name, description, type_id, parent_id, date)
@@ -123,7 +140,7 @@ class Database():
                                  (seq_id, matrix_id, exclude_criterion_id))
             con.commit()
 
-            new_matrix = self.retrieve_matrix_by_id(matrix_id)
+            new_matrix = self.get_matrix_by_id(matrix_id)
 
         else:
             new_matrix = None
@@ -131,23 +148,42 @@ class Database():
         con.close()
         return new_matrix
 
-    def delete_matrix_by_id(self, matrix_id):
+    def remove_matrix_by_id(self, matrix_id):
         con = sqlite3.connect(self.dbname)
         cur = con.cursor()
 
-        cur.execute("DELETE FROM matrix WHERE id = ?;", (matrix_id,))
+        # first remove all records from the sequence_matrix_include_map
+        cur.execute("SELECT id FROM sequence_matrix_include_map WHERE matrix_id == ?;", (matrix_id,))
+        rec_ids = [r[0] for r in cur.fetchall()]
+        for rec_id in rec_ids:
+            cur.execute("DELETE FROM sequence_matrix_include_map WHERE id == ?;", (rec_id,))
+
+        # remove records from sequence_matrix_exclude_map
+        cur.execute("SELECT id FROM sequence_matrix_exclude_map WHERE matrix_id == ?;", (matrix_id,))
+        rec_ids = [r[0] for r in cur.fetchall()]
+        for rec_id in rec_ids:
+            cur.execute("DELETE FROM sequence_matrix_exclude_map WHERE id == ?;", (rec_id,))
+
+        # now remove the actual matrix entry itself
+        cur.execute("DELETE FROM matrix WHERE id == ?;", (matrix_id,))
         con.commit()
         con.close()
+
         self.update_matrix_list()
 
-    def delete_matrix_by_name(self, matrix_name):
+    def remove_matrix_by_name(self, matrix_name):
         con = sqlite3.connect(self.dbname)
         cur = con.cursor()
+        cur.execute("SELECT id FROM matrix WHERE name == ?;", (matrix_name,)) 
+        try:
+            remove_id = cur.fetchone()[0]
+        except TypeError:
+            remove_id = None
 
-        cur.execute("DELETE FROM matrix WHERE name = ?;", (matrix_name,))
-        con.commit()
+        if remove_id != None:
+            self.remove_matrix_by_id(remove_id)
+
         con.close()
-        self.update_matrix_list()
 
 #################################################################
 #
@@ -155,6 +191,13 @@ class Database():
 #   information about flagged sequences?
 #
 #################################################################
+
+    def get_sequence_by_id(self, seq_id):
+        con = sqlite3.connect(self.dbname)
+        cur = con.cursor()
+
+        sequence = Sequence(self.dbname, seq_id)
+        return sequence
 
     def import_matrix_from_csv(self, path_to_csv_file, name, description, matrix_type, \
                                    taxon_name_column_header = "taxon", **kwargs):
@@ -219,9 +262,7 @@ class Database():
             if name in fields:
                 if name not in matched:
                     if name == "clade":
-                        # search clades are provided in phlawd config files as names, but in the recorddb
-                        # we store references to the corresponding records in the ncbi taxononomy table.
-                        # here we look up the taxon id for whatever clade is named in the config file
+                        # look up the ncbi_id for clade in the config file
                         cur.execute("SELECT taxonomy.ncbi_id from taxonomy where taxonomy.name = ?;",(value,)) 
                         params_valid["clade_id"] = cur.fetchone()[0]
                     params_valid[name] = value
@@ -269,7 +310,7 @@ class Database():
         
         con.close()
 
-        this_phlawdrun = self.retrieve_phlawdrun_by_id(phlawdrun_id)
+        this_phlawdrun = self.get_phlawdrun_by_id(phlawdrun_id)
         this_phlawdrun.import_sequences_from_source_db(seqs_to_exclude=duplicate_accession_ids)
 
         return this_phlawdrun
@@ -443,7 +484,7 @@ class Database():
         print "Not implemented due to speed. Use the phlawd executable to build a sequence database " \
             "and then use autophy.wipe(database_filename) clear it of all non-taxonomic data."
 
-    def retrieve_matrices_by_type(self, matrix_type):
+    def get_matrix_ids_by_type(self, matrix_type):
         con = sqlite3.connect(self.dbname)
         cur = con.cursor()
         cur.execute("SELECT id FROM matrix_type WHERE name == ?;", (matrix_type,))
@@ -456,30 +497,27 @@ class Database():
         cur.execute("SELECT id FROM matrix WHERE matrix_type_id == ?;", (this_type_id,))
         results = cur.fetchall()
 
-        matrices = list()
-        for this_matrix_id in [record[0] for record in results]:
-            this_matrix = Matrix(self.dbname, matrix_id=this_matrix_id)
-            matrices.append(this_matrix)
+        matrix_ids = [record[0] for record in results]
 
         con.close()
-        return matrices
+        return matrix_ids
 
-    def retrieve_matrix_by_name(self, matrix_name):
+    def get_matrix_by_name(self, matrix_name):
         the_matrix = Matrix(self.dbname, matrix_name=matrix_name)
         return the_matrix
 
-    def retrieve_matrix_by_id(self, matrix_id):
+    def get_matrix_by_id(self, matrix_id):
         the_matrix = Matrix(self.dbname, matrix_id=matrix_id)
         return the_matrix
 
-    def retrieve_phlawdrun_by_id(self, phlawdrun_id):
+    def get_phlawdrun_by_id(self, phlawdrun_id):
         the_phlawdrun = PhlawdRun(self.dbname, phlawdrun_id=phlawdrun_id)
         return the_phlawdrun
 
     def update_default_matrix(self):
         # currently quite incomplete...
         try:
-            cur_default_matrix = self.retrieve_matrix_by_name("default")            
+            cur_default_matrix = self.get_matrix_by_name("default")            
         except NameError:
             n_taxa_default = 0
 
@@ -692,6 +730,23 @@ class Matrix():
 
         partfile.close()
 
+    def get_included_sequence_ids(self):
+        con = sqlite3.connect(self.dbname)
+        cur = con.cursor()
+
+        cur.execute("SELECT sequence_id FROM sequence_matrix_include_map WHERE matrix_id = ?;", (self.matrix_id,))
+
+        included_sequence_ids = list()
+        for row in cur.fetchall():
+            try:
+                seq_id = row[0]
+            except TypeError:
+                pass
+            included_sequence_ids.append(seq_id)
+
+        con.close()
+        return included_sequence_ids
+
     def update_partition_info(self):
         con = sqlite3.connect(self.dbname)
         cur = con.cursor()
@@ -761,23 +816,6 @@ class Matrix():
                 print "Processed %s tip taxa. %s to go." % (i, self.n_taxa - i)
 
         con.close()
-
-    def get_included_sequence_ids(self):
-        con = sqlite3.connect(self.dbname)
-        cur = con.cursor()
-
-        cur.execute("SELECT sequence_id FROM sequence_matrix_include_map WHERE matrix_id = ?;", (self.matrix_id,))
-
-        included_sequence_ids = list()
-        for row in cur.fetchall():
-            try:
-                seq_id = row[0]
-            except TypeError:
-                pass
-            included_sequence_ids.append(seq_id)
-
-        con.close()
-        return included_sequence_ids
 
     def update_taxa(self):
         # generates a list of tuples containing information about all taxa referenced by this matrix.
@@ -973,6 +1011,43 @@ class PhlawdRun_Source():
             self.excludefile_text = ""
             message = "Could not access the excludefile at %s" % self.excludefile_path
             raise IOError(message)
+
+class Sequence():
+    def __init__(self, db_fname, sequence_id):
+        self.dbname = db_fname
+        con = sqlite3.connect(self.dbname)
+        cur = con.cursor()
+
+        cur.execute("PRAGMA table_info(sequences)")
+        colnames = ["sequences." + colname for colname in zip(*cur.fetchall())[1]]
+        colnames += ["taxonomy.name",]
+
+        query_text = "SELECT " + ", ".join(colnames) + " FROM taxonomy INNER JOIN sequences ON " \
+                        "taxonomy.ncbi_id == sequences.ncbi_id WHERE taxonomy.name_class == " \
+                        "'scientific name' AND sequences.id == ?;"
+
+        cur.execute(query_text,(sequence_id,))
+        r = cur.fetchone()
+
+        for colname, value in zip(colnames,r):
+            exec_str = "self."
+            parts = colname.split(".")
+            if parts[0] == "sequences":
+                if parts[1] == "id":
+                    exec_str += "db_id"
+                else:
+                    exec_str += parts[1]
+            elif colname == "taxonomy.name" :
+                exec_str += "taxon_name"
+            else:
+                exec_str += re.sub("\.","\_",colname)
+            exec_str += " = "
+            try:
+                int_value = int(value)
+                exec_str += str(int_value)
+            except ValueError:
+                exec_str += "'" + value + "'"
+            exec exec_str
 
 class Taxonomy():
     def __init__(self, db_fname):
