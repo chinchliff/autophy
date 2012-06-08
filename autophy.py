@@ -17,6 +17,7 @@ class Database():
                           excluded_sequences = None, exclude_criterion = "", included_taxa = None, \
                           included_phlawdruns = None, included_sequences = None, parent_id = None, date = None, \
                           friendly = False, overwrite = False):
+
         #####################################################################################################
         #
         # exclusion is evaluated after inclusion, with the consequence that any sequence in any excluded set
@@ -441,6 +442,27 @@ class Database():
     def install_taxonomy(self):
         print "Not implemented due to speed. Use the phlawd executable to build a sequence database " \
             "and then use autophy.wipe(database_filename) clear it of all non-taxonomic data."
+
+    def retrieve_matrices_by_type(self, matrix_type):
+        con = sqlite3.connect(self.dbname)
+        cur = con.cursor()
+        cur.execute("SELECT id FROM matrix_type WHERE name == ?;", (matrix_type,))
+        r = cur.fetchone()
+        try:
+            this_type_id = r[0]
+        except TypeError:
+            raise NameError("That matrix type could not be found.")
+
+        cur.execute("SELECT id FROM matrix WHERE matrix_type_id == ?;", (this_type_id,))
+        results = cur.fetchall()
+
+        matrices = list()
+        for this_matrix_id in [record[0] for record in results]:
+            this_matrix = Matrix(self.dbname, matrix_id=this_matrix_id)
+            matrices.append(this_matrix)
+
+        con.close()
+        return matrices
 
     def retrieve_matrix_by_name(self, matrix_name):
         the_matrix = Matrix(self.dbname, matrix_name=matrix_name)
