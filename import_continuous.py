@@ -12,5 +12,8 @@ if __name__ == "__main__":
 
     db = autophy.Database(database)
 
-    while True:
+    max_imports = 1
+    i = 0
+    while i < max_imports:
         db.import_phlawdruns_from_dir(source_dir)
+        i += 1

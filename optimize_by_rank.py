@@ -1,7 +1,44 @@
 #!/usr/bin/env python
-import autophy, sys, os, subprocess, time
+import autophy, sys, os, subprocess, time, random
+
+###########################################################################################
+#
+#   we are taking a 3-step approach to dealing with matrix subsampling. 
+#
+#   step 1 (currently this is not happening):
+#   identify loci with high information content at deep nodes, using something
+#   like informativeness/decisiveness. record these, so that we can exclude them from
+#   subsampling by downstream methods (we want to keep them in the tree to inform the
+#   deep nodes even if they somewhat reduce the decisiveness of shallower clades...
+#   in fact as long as the taxa sampled for these deeply-informative nodes are also
+#   sampled for common, fast-evolving genes, then including them should not be
+#   expected to have much of an effect at shallow nodes.
+#
+#   step 1 contd: feed the identified deeply informative loci to decisivator in one large
+#   sampling matrix. although we cannot exclude deep nodes from the matrices to improve
+#   decisiveness as we can with species, we can:
+#      - flag nodes for which few decisive data are available in deeply-informative loci
+#      - determine and record which loci are most deeply-informative
+#
+#   step 2: feed subtrees extracted from the ncbi taxonomy and the corresponding
+#   sampling matrices to the subsampling optimization routines. so far we
+#   are thinking of using decisivator and roguenarok. curently the expectation is to
+#   split out subtrees at the family level to feed to the optimizers. after each 
+#   step in the optimization flow (e.g. decisivator), we re-import the subsampled
+#   matrix, recording the parameters used to subsample it, and then export it to
+#   send to the next optimization routine.
+#
+#   step 3: after all the subtrees have been subjected
+#   to all optimization procedures, we will gather the resulting optimized matrices
+#   and generate an aggregate matrix consisting of only those sequences retained by
+#   the optimizers. this will be exported and fed to raxml for final tree searching.
+#
+###########################################################################################
+
 
 def decisivate(starting_matrix, guidetree_path, configfile_path, wd, dbname):
+
+    global overwrite, friendly
 
     #############################################################################################
     #
@@ -40,11 +77,21 @@ def decisivate(starting_matrix, guidetree_path, configfile_path, wd, dbname):
     db = autophy.Database(dbname)
     decisive_matrix = db.import_matrix_from_csv(path_to_decisive_csv, name, description, matrix_type, \
                                                     excluded_sequences = indecisive_sequence_ids, \
-                                                    exclude_criterion = "indecisive", overwrite = True, \
-                                                    parent_id = starting_matrix.matrix_id, date = time.time())
+                                                    exclude_criterion = "indecisive", overwrite = overwrite, \
+                                                    friendly = friendly, date = time.time(), \
+                                                    parent_id = starting_matrix.matrix_id)
     return decisive_matrix
 
 def derogueify(starting_matrix, wd):
+    
+    # general parameters
+    global overwrite, friendly, rseed, n_threads
+
+    # RAxML parameters
+    global raxml_model, n_bootstrap_reps, raxml_bootstrap_out, raxml_validation_out
+
+    # RogueNaRok parameters
+    global roguenarok_threshold, dropset_size, roguenarok_std_out
 
     print "starting rogue search..."
     starting_matrix.export_alignment(path_prefix = wd)
@@ -56,14 +103,6 @@ def derogueify(starting_matrix, wd):
     # we have to change the cwd for raxml to put its output in the right place
     os.chdir(wd)
 
-    # open an file to catch unwanted screen output
-    oblivion = open("/dev/null", "wb")
-
-    # RAxML general parameters
-    model = "GTRCAT"
-    n_threads = "8"
-    rseed = "12345"
-
     # raxml input validation parameters
     output_path = os.path.basename(alignment_path).split("_alignment")[0]
     partition_path = alignment_path.split("alignment")[0] + "partitions.part"
@@ -74,12 +113,12 @@ def derogueify(starting_matrix, wd):
                                "-f", "c", \
                                "-s", alignment_path, \
                                "-q", partition_path, \
-                               "-m", model, \
+                               "-m", raxml_model, \
                                "-n", validation_output_path, \
                                "-T", n_threads]
     
     print "validating input alignment" 
-    subprocess.call(args_raxml_validation, stdout = oblivion)
+    subprocess.call(args_raxml_validation, stdout = raxml_validation_out)
 
     # update alignments to use validated alignment if it exists
     alignment_path_reduced = alignment_path + ".reduced"
@@ -88,7 +127,6 @@ def derogueify(starting_matrix, wd):
         partition_path = partition_path + ".reduced"
 
     # set other raxml bootstrap search parameters
-    n_reps = "100"
     bootstrap_output_name = output_path + "_bootstraps"
 
     # build RAxML parameters for bootstrap trees using fast bootstrapping
@@ -96,14 +134,14 @@ def derogueify(starting_matrix, wd):
                                 "-T", n_threads, \
                                 "-x", rseed, \
                                 "-p", rseed, \
-                                "-#", n_reps, \
-                                "-m", model, \
+                                "-#", n_bootstrap_reps, \
+                                "-m", raxml_model, \
                                 "-s", alignment_path, \
                                 "-q", partition_path, \
                                 "-n", bootstrap_output_name]
 
     print "performing bootstrap search"
-    subprocess.call(args_raxml_bootstrap, stdout = oblivion)
+    subprocess.call(args_raxml_bootstrap, stdout = raxml_bootstrap_out)
 
     # change the cwd back to where we started
     os.chdir(start_dir)
@@ -111,20 +149,18 @@ def derogueify(starting_matrix, wd):
     # RogueNaRok parameters
     bootstrap_file = wd + "RAxML_bootstrap." + bootstrap_output_name
     roguenarok_output_name = output_path
-    threshold = "50"
-    dropset_size = "2"
 
     args_roguenarok = ["roguenarok", \
                            "-i", bootstrap_file, \
                            "-n", roguenarok_output_name, \
-                           "-c", threshold, \
+                           "-c", roguenarok_threshold, \
                            "-s", dropset_size, \
                            "-w", wd, \
                            "-T", n_threads]
 
     # call roguenarok
     print "derogueifying"
-    subprocess.call(args_roguenarok) #, stdout = "/dev/null")
+    subprocess.call(args_roguenarok, stdout = roguenarok_std_out)
 
     # extract rogue taxon info from RogueNaRok output
     roguefile = open(wd + "RogueNaRok_droppedRogues." + roguenarok_output_name, "rb")
@@ -162,8 +198,8 @@ def derogueify(starting_matrix, wd):
 
     derogued_matrix = db.create_matrix(name, description, matrix_type, included_sequences = seqs, \
                                            excluded_taxa = rogue_ncbi_ids, exclude_criterion = "rogue", \
-                                           overwrite = True, parent_id = starting_matrix.matrix_id, \
-                                           date = time.time())
+                                           overwrite = overwrite, friendly = friendly, date = time.time(), \
+                                           parent_id = starting_matrix.matrix_id)
     return derogued_matrix
 
 if __name__ == "__main__":
@@ -171,7 +207,28 @@ if __name__ == "__main__":
     if len(sys.argv) < 3:
         print "usage: optimize_by_rank.py database_filename rank [working directory]"
         sys.exit(0)
-    
+
+    # opening a file to nowhere for unwanted output
+    oblivion = open("/dev/null", "wb")
+
+    # setting general parameters
+    overwrite = True
+    friendly = False
+    rseed = "12345" # random.randint(1,100000000)
+    n_threads = "16"    
+
+    # RAxML parameters
+    raxml_model = "GTRCAT"
+    n_bootstrap_reps = "300"
+    raxml_validation_out = oblivion
+    raxml_bootstrap_out = oblivion
+
+    # roguenarok parameters
+    roguenarok_threshold = "50"
+    dropset_size = "2"
+    roguenarok_std_out = oblivion
+
+    # process command line args
     dbname = sys.argv[1]
     rank_to_optimize = sys.argv[2]
     try:
@@ -179,62 +236,19 @@ if __name__ == "__main__":
     except IndexError:
         wd = ""
 
+    # get info for subtree of interest; setting root node manually
     t = autophy.Taxonomy(dbname)
     root = t.get_taxon_by_name("Streptophytina")
+
+    # get list of taxa of desired rank within tree of interest
     taxa_to_optimize = root.get_depth_n_children_by_rank(rank_to_optimize)
 
     db = autophy.Database(dbname)
-
-    ###########################################################################################
-    #
-    #   we are taking a 3-step approach to dealing with matrix subsampling. 
-    #
-    #   currently, the first step in this approach is not happening; it needs to be built.
-    #
-    #   step 1: identify loci with high information content at deep nodes, using something
-    #   like informativeness/decisiveness. record these, so that we can exclude them from
-    #   subsampling by downstream methods (we want to keep them in the tree to inform the
-    #   deep nodes even if they somewhat reduce the decisiveness of shallower clades...
-    #   in fact as long as the taxa sampled for these deeply-informative nodes are also
-    #   sampled for common, fast-evolving genes, then including them should not be
-    #   expected to have much of an effect at shallow nodes.
-    #
-    #   step 1 contd: feed the identified deeply informative loci to decisivator in one large
-    #   sampling matrix. although we cannot exclude deep nodes from the matrices to improve
-    #   decisiveness as we can with species, we can:
-    #      - flag nodes for which few decisive data are available in deeply-informative loci
-    #      - determine and record which loci are most deeply-informative
-    #
-    #   step 2: feed subtrees extracted from the ncbi taxonomy and the corresponding
-    #   sampling matrices to the subsampling optimization routines. so far we
-    #   are thinking of using decisivator and roguenarok. curently the expectation is to
-    #   split out subtrees at the family level to feed to the optimizers. after each 
-    #   step in the optimization flow (e.g. decisivator), we re-import the subsampled
-    #   matrix, recording the parameters used to subsample it, and then export it to
-    #   send to the next optimization routine.
-    #
-    #   step 3: after all the subtrees have been subjected
-    #   to all optimization procedures, we will gather the resulting optimized matrices
-    #   and generate an aggregate matrix consisting of only those sequences retained by
-    #   the optimizers. this will be exported and fed to raxml for final tree searching.
-    #
-    ###########################################################################################
 
     for ncbi_id in zip(*taxa_to_optimize)[1]:
 
         print "\n"
         taxon = t.get_taxon_by_ncbi_id(ncbi_id)
-
-        # get a taxonomy tree for this taxon, export it
-        guidetree = taxon.get_newick_subtree()
-        guidetree_path = wd + taxon.scientific_name + "_taxonomy_guide.tre"
-        guidetree_file = open(guidetree_path, "wb")
-        guidetree_file.write(guidetree)
-
-        # define matrix name and description
-        temp_matrix_name = taxon.scientific_name + "_all_seqs"
-        temp_matrix_description = "step 0 optimization: this matrix contains all seqs for " \
-            "this taxon. it will be passed to subsampling methods for optimization."
 
         # get all child species for current taxon
         child_species = taxon.get_depth_n_children_by_rank("species")
@@ -246,14 +260,37 @@ if __name__ == "__main__":
             # synonymized (e.g. Nyssaceae -> Nyssoideae; original family is empty)
             continue
 
+        ########################################################################################
+        #
+        #   might need to add sub-splitting feature for large taxa; if taxon.nspecies > max,
+        #   then split taxon into subtaxa, perform operations on subtaxa
+        #
+        #######################################################################################
+
+
+        # get a taxonomy tree for this taxon, export it
+        guidetree = taxon.get_newick_subtree()
+        guidetree_path = wd + taxon.scientific_name + "_taxonomy_guide.tre"
+        guidetree_file = open(guidetree_path, "wb")
+        guidetree_file.write(guidetree)
+
+        # define matrix name and description
+        temp_matrix_name = taxon.scientific_name + "_all_seqs"
+        temp_matrix_description = "step 0 optimization: this matrix contains all seqs for " \
+            "this taxon. it will be passed to subsampling methods for optimization."            
+
         # if a matrix with this name already exists, delete it
         db.update_matrix_list()
-        if temp_matrix_name in zip(*db.matrices)[0]:
-            db.delete_matrix_by_name(temp_matrix_name)
+        try:
+            if temp_matrix_name in zip(*db.matrices)[0]:
+                db.remove_matrix_by_name(temp_matrix_name)
+        except IndexError:
+            pass
 
         # create new matrix containing all seqs for species gathered above
-        matrix = db.create_matrix(temp_matrix_name, temp_matrix_description, \
-                     matrix_type="intermediate", included_taxa = child_species_ids, overwrite = True)
+        matrix = db.create_matrix(temp_matrix_name, temp_matrix_description, matrix_type="intermediate",  \
+                                      included_taxa = child_species_ids, overwrite = overwrite, \
+                                      friendly = friendly)
 
         # in the case that we find no sequences for this taxon, move on
         if matrix == None:
@@ -266,11 +303,9 @@ if __name__ == "__main__":
         # export decisivated alignment and run roguenarok on it
         derogued_matrix = derogueify(decisive_matrix, wd)
 
-        ### collect all optimized matrices
-        ### combine them into a single matrix
+    optimized_matrix_ids = db.get_matrix_ids_by_type("optimized")
+    optimized_matrix = db.combine_matrices(optimized_matrix_ids, name = "final", description = "final!", \
+                                               matrix_type="final", overwrite = overwrite, friendly = friendly)
+    optimized_matrix.export_alignment(wd)
 
-
-
-        ### (probably for a different file)
-        ### export the matrix
-        ### run it through raxml
+    oblivion.close()
