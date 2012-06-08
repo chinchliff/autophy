@@ -6,6 +6,10 @@ class Database():
     def __init__(self,dbname):
         self.dbname = dbname
         self.update_table_list()
+
+        if len(self.tables) < 2:
+            self.install_empty_recorddb_tables()
+            
         self.update_matrix_list()
         self.update_phlawdrun_list()
 
@@ -148,43 +152,6 @@ class Database():
         con.close()
         return new_matrix
 
-    def remove_matrix_by_id(self, matrix_id):
-        con = sqlite3.connect(self.dbname)
-        cur = con.cursor()
-
-        # first remove all records from the sequence_matrix_include_map
-        cur.execute("SELECT id FROM sequence_matrix_include_map WHERE matrix_id == ?;", (matrix_id,))
-        rec_ids = [r[0] for r in cur.fetchall()]
-        for rec_id in rec_ids:
-            cur.execute("DELETE FROM sequence_matrix_include_map WHERE id == ?;", (rec_id,))
-
-        # remove records from sequence_matrix_exclude_map
-        cur.execute("SELECT id FROM sequence_matrix_exclude_map WHERE matrix_id == ?;", (matrix_id,))
-        rec_ids = [r[0] for r in cur.fetchall()]
-        for rec_id in rec_ids:
-            cur.execute("DELETE FROM sequence_matrix_exclude_map WHERE id == ?;", (rec_id,))
-
-        # now remove the actual matrix entry itself
-        cur.execute("DELETE FROM matrix WHERE id == ?;", (matrix_id,))
-        con.commit()
-        con.close()
-
-        self.update_matrix_list()
-
-    def remove_matrix_by_name(self, matrix_name):
-        con = sqlite3.connect(self.dbname)
-        cur = con.cursor()
-        cur.execute("SELECT id FROM matrix WHERE name == ?;", (matrix_name,)) 
-        try:
-            remove_id = cur.fetchone()[0]
-        except TypeError:
-            remove_id = None
-
-        if remove_id != None:
-            self.remove_matrix_by_id(remove_id)
-
-        con.close()
-
 #################################################################
 #
 #   question: how will we handle deleting things while retaining
@@ -192,12 +159,39 @@ class Database():
 #
 #################################################################
 
-    def get_sequence_by_id(self, seq_id):
+    def get_matrix_ids_by_type(self, matrix_type):
         con = sqlite3.connect(self.dbname)
         cur = con.cursor()
+        cur.execute("SELECT id FROM matrix_type WHERE name == ?;", (matrix_type,))
+        r = cur.fetchone()
+        try:
+            this_type_id = r[0]
+        except TypeError:
+            raise NameError("That matrix type could not be found.")
 
-        sequence = Sequence(self.dbname, seq_id)
-        return sequence
+        cur.execute("SELECT id FROM matrix WHERE matrix_type_id == ?;", (this_type_id,))
+        results = cur.fetchall()
+
+        matrix_ids = [record[0] for record in results]
+
+        con.close()
+        return matrix_ids
+
+    def get_matrix_by_name(self, matrix_name):
+        the_matrix = Matrix(self.dbname, matrix_name=matrix_name)
+        return the_matrix
+
+    def get_matrix_by_id(self, matrix_id):
+        the_matrix = Matrix(self.dbname, matrix_id=matrix_id)
+        return the_matrix
+
+    def get_phlawdrun_by_id(self, phlawdrun_id):
+        the_phlawdrun = PhlawdRun(self.dbname, phlawdrun_id=phlawdrun_id)
+        return the_phlawdrun
+
+    def get_sequence_by_id(self, seq_id):
+        the_sequence = Sequence(self.dbname, seq_id)
+        return the_sequence
 
     def import_matrix_from_csv(self, path_to_csv_file, name, description, matrix_type, \
                                    taxon_name_column_header = "taxon", **kwargs):
@@ -387,22 +381,22 @@ class Database():
 	con.commit()
 
         ### matrix_type contains descriptions of different types of matrices used
-        matrix_type_already_present = False
-        try:
-            cur.execute("CREATE TABLE matrix_type (" \
-                    "id INTEGER PRIMARY KEY, " \
-                    "name TEXT, " \
-                    "description TEXT);")
-            con.commit()
-	except sqlite3.OperationalError as error:
-            error_tokens = error.message.split()
-	    if error_tokens[0] == "table" and error_tokens[3] == "exists":
-                matrix_type_already_present = True
-            else:
-                raise error
+#        matrix_type_already_present = False
+#        try:
+        cur.execute("CREATE TABLE matrix_type (" \
+                        "id INTEGER PRIMARY KEY, " \
+                        "name TEXT, " \
+                        "description TEXT);")
+        con.commit()
+#	except sqlite3.OperationalError as error:
+#            error_tokens = error.message.split()
+#	    if error_tokens[0] == "table" and error_tokens[3] == "exists":
+#                matrix_type_already_present = True
+#            else:
+#                raise error
 
-        if not matrix_type_already_present:
-            matrix_types = list(( \
+#        if not matrix_type_already_present:
+        matrix_types = list(( \
                 ("default", "the most inclusive matrix, consisting of all sequences from all phlawdruns. " \
                      "there can be only one."),
                 ("intermediate", "a matrix used for sampling optimization, often corresponding to a single " \
@@ -414,36 +408,36 @@ class Database():
                 ("final", "the final matrix, generated through combination of optimized (subsampled) " \
                      "submatrices of the default (all-inclusive) matrix, to be used for end-product tree-searching")))
 
-            for matrix_type in matrix_types:
-                cur.pexecute("INSERT INTO matrix_type(name, description) VALUES (?, ?);", matrix_type)
-            con.commit()
+        for matrix_type in matrix_types:
+            cur.pexecute("INSERT INTO matrix_type(name, description) VALUES (?, ?);", matrix_type)
+        con.commit()
 
         ### exclude_criterion describes some reasons why sequences may have been excluded from the db ###
-        exclude_criterion_already_present = False
-        try:
-            cur.execute("CREATE TABLE exclude_criterion(" \
-                    "id INTEGER PRIMARY KEY, " \
-                    "name TEXT, " \
-                    "description TEXT);")
-            con.commit()
-	except sqlite3.OperationalError as error:
-            error_tokens = error.message.split()
-	    if error_tokens[0] == "table" and error_tokens[3] == "exists":
-                exclude_criterion_already_present = True
-            else:
-                raise error
+#        exclude_criterion_already_present = False
+#        try:
+        cur.execute("CREATE TABLE exclude_criterion(" \
+                        "id INTEGER PRIMARY KEY, " \
+                        "name TEXT, " \
+                        "description TEXT);")
+        con.commit()
+#	except sqlite3.OperationalError as error:
+#            error_tokens = error.message.split()
+#	    if error_tokens[0] == "table" and error_tokens[3] == "exists":
+#                exclude_criterion_already_present = True
+#            else:
+#                raise error
 
-        if not exclude_criterion_already_present:
-            exclude_criteria = list(( \
+#        if not exclude_criterion_already_present:
+        exclude_criteria = list(( \
                 ("rogue", "identified as a rogue taxon by roguenarok. see matrix record for details"),
                 ("indecisive", "excluded at the recommendation of decisivator. see matrix record for details"),
                 ("orphan", "identified by sister-clade comparison as part of a clade depauperate for this " \
                      "locus. see matrix record for details"),
                 ("other", "see matrix record for additional details")))
 
-            for criterion in exclude_criteria:
-                cur.execute("INSERT INTO exclude_criterion(name, description) VALUES (?, ?);", criterion)
-            con.commit()
+        for criterion in exclude_criteria:
+            cur.execute("INSERT INTO exclude_criterion(name, description) VALUES (?, ?);", criterion)
+        con.commit()
 
         ### treesearch contains information about tree searches performed using alignments 
         ### generated from matrices
@@ -478,41 +472,49 @@ class Database():
 #		"description);")
 #	con.commit()
 
+        self.update_table_list()
 	con.close()
 
     def install_taxonomy(self):
         print "Not implemented due to speed. Use the phlawd executable to build a sequence database " \
             "and then use autophy.wipe(database_filename) clear it of all non-taxonomic data."
 
-    def get_matrix_ids_by_type(self, matrix_type):
+    def remove_matrix_by_id(self, matrix_id):
         con = sqlite3.connect(self.dbname)
         cur = con.cursor()
-        cur.execute("SELECT id FROM matrix_type WHERE name == ?;", (matrix_type,))
-        r = cur.fetchone()
+
+        # first remove all records from the sequence_matrix_include_map
+        cur.execute("SELECT id FROM sequence_matrix_include_map WHERE matrix_id == ?;", (matrix_id,))
+        rec_ids = [r[0] for r in cur.fetchall()]
+        for rec_id in rec_ids:
+            cur.execute("DELETE FROM sequence_matrix_include_map WHERE id == ?;", (rec_id,))
+
+        # remove records from sequence_matrix_exclude_map
+        cur.execute("SELECT id FROM sequence_matrix_exclude_map WHERE matrix_id == ?;", (matrix_id,))
+        rec_ids = [r[0] for r in cur.fetchall()]
+        for rec_id in rec_ids:
+            cur.execute("DELETE FROM sequence_matrix_exclude_map WHERE id == ?;", (rec_id,))
+
+        # now remove the actual matrix entry itself
+        cur.execute("DELETE FROM matrix WHERE id == ?;", (matrix_id,))
+        con.commit()
+        con.close()
+
+        self.update_matrix_list()
+
+    def remove_matrix_by_name(self, matrix_name):
+        con = sqlite3.connect(self.dbname)
+        cur = con.cursor()
+        cur.execute("SELECT id FROM matrix WHERE name == ?;", (matrix_name,)) 
         try:
-            this_type_id = r[0]
+            remove_id = cur.fetchone()[0]
         except TypeError:
-            raise NameError("That matrix type could not be found.")
+            remove_id = None
 
-        cur.execute("SELECT id FROM matrix WHERE matrix_type_id == ?;", (this_type_id,))
-        results = cur.fetchall()
-
-        matrix_ids = [record[0] for record in results]
+        if remove_id != None:
+            self.remove_matrix_by_id(remove_id)
 
         con.close()
-        return matrix_ids
-
-    def get_matrix_by_name(self, matrix_name):
-        the_matrix = Matrix(self.dbname, matrix_name=matrix_name)
-        return the_matrix
-
-    def get_matrix_by_id(self, matrix_id):
-        the_matrix = Matrix(self.dbname, matrix_id=matrix_id)
-        return the_matrix
-
-    def get_phlawdrun_by_id(self, phlawdrun_id):
-        the_phlawdrun = PhlawdRun(self.dbname, phlawdrun_id=phlawdrun_id)
-        return the_phlawdrun
 
     def update_default_matrix(self):
         # currently quite incomplete...
