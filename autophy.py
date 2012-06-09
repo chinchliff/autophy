@@ -17,22 +17,12 @@ class Database():
         # given an iterable of matrix ids, extract their included sequence ids
         # and combine them into a single matrix
 
-#        con = sqlite3.connect(self.dbname)
-#        cur = con.cursor()
-
         seq_ids_to_include = list()
         for this_id in matrix_ids:
             this_matrix = Matrix(self.dbname, matrix_id = this_id)
             seq_ids_to_include += this_matrix.get_included_sequence_ids()
 
-#        print len(seq_ids_to_include)
-
         new_matrix = self.create_matrix(included_sequences = seq_ids_to_include, **kwargs)
-
-#        for seq_id in new_matrix.get_included_sequence_ids():
-#            seq = Sequence(self.dbname, seq_id)
-#            print seq.taxon_name
-
         return new_matrix
 
     def connection(self):
@@ -42,7 +32,7 @@ class Database():
     def create_matrix(self, name, description, matrix_type, excluded_taxa = None, excluded_phlawdruns = None, \
                           excluded_sequences = None, exclude_criterion = "", included_taxa = None, \
                           included_phlawdruns = None, included_sequences = None, parent_id = None, date = None, \
-                          friendly = False, overwrite = False):
+                          overwrite = False):
 
         #####################################################################################################
         #
@@ -70,12 +60,6 @@ class Database():
                 seqs_to_include += [r[0] for r in cur.fetchall()]
         
         if hasattr(included_taxa,"__iter__"):
-#            taxon_ncbi_ids = list()
-#            for taxon_id in included_taxa:
-#                cur.execute("SELECT ncbi_id FROM taxonomy WHERE id = ?;",(taxon_id,))
-#                r = cur.fetchone()
-#                taxon_ncbi_ids.append(r[0])
-
             for ncbi_id in included_taxa:
                 cur.execute("SELECT id FROM sequences WHERE ncbi_id = ?;",(ncbi_id,))
                 seqs_to_include += [r[0] for r in cur.fetchall()]
@@ -112,37 +96,47 @@ class Database():
                 message = "That matrix type could not be found."
                 raise NameError(message)
 
-            # remove preexisting matrix if desired
+            # remove preexisting matrix if desired, otherwise retain it
+            duplicate = False
             if overwrite:
                 self.remove_matrix_by_name(name)
+            else:
+                cur.execute("SELECT id FROM matrix WHERE name == ?;", (name,))
+                try:
+                    matrix_id = cur.fetchone()[0]
+                    print "Found a preexisting matrix by the name: " + name + ". It will not be overwritten."
+                    duplicate = True
+                except TypeError:
+                    pass
  
-            # create a new matrix record, and recover its id
-            query_string = "INSERT INTO matrix(name, description, matrix_type_id, parent_id, date) VALUES (?,?,?,?,?);"
-            values = (name, description, type_id, parent_id, date)
-            cur.execute(query_string,values)
-            cur.execute("SELECT last_insert_rowid();")
-            matrix_id = cur.fetchone()[0]
+            if not duplicate:
+                # create a new matrix record, and recover its id
+                query_string = "INSERT INTO matrix(name, description, matrix_type_id, parent_id, date) VALUES (?,?,?,?,?);"
+                values = (name, description, type_id, parent_id, date)
+                cur.execute(query_string,values)                
+                cur.execute("SELECT last_insert_rowid();")
+                matrix_id = cur.fetchone()[0]
 
-            # add included sequences
-            for seq_id in seqs_to_include:
-                cur.pexecute("INSERT INTO sequence_matrix_include_map (sequence_id, matrix_id) VALUES (?,?);", \
-                                 (seq_id, matrix_id))
-            con.commit()
+                # add included sequences
+                for seq_id in seqs_to_include:
+                    cur.pexecute("INSERT INTO sequence_matrix_include_map (sequence_id, matrix_id) VALUES (?,?);", \
+                                     (seq_id, matrix_id))
+                con.commit()
 
-            # validate the exclusion criterion if one was provided
-            cur.execute("SELECT id FROM exclude_criterion WHERE name == ?;", (exclude_criterion,))
-            r = cur.fetchone()
-            try:
-                exclude_criterion_id = r[0]
-            except TypeError:
-                pass
+                # validate the exclusion criterion if one was provided
+                cur.execute("SELECT id FROM exclude_criterion WHERE name == ?;", (exclude_criterion,))
+                r = cur.fetchone()
+                try:
+                    exclude_criterion_id = r[0]
+                except TypeError:
+                    pass
 
-            # record excluded sequences
-            for seq_id in seqs_to_exclude:
-                cur.pexecute("INSERT INTO sequence_matrix_exclude_map (sequence_id, matrix_id, " \
-                                 "exclude_criterion_id) VALUES (?,?,?);", \
-                                 (seq_id, matrix_id, exclude_criterion_id))
-            con.commit()
+                # record excluded sequences
+                for seq_id in seqs_to_exclude:
+                    cur.pexecute("INSERT INTO sequence_matrix_exclude_map (sequence_id, matrix_id, " \
+                                     "exclude_criterion_id) VALUES (?,?,?);", \
+                                     (seq_id, matrix_id, exclude_criterion_id))
+                con.commit()
 
             new_matrix = self.get_matrix_by_id(matrix_id)
 

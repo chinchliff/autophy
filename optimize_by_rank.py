@@ -38,7 +38,7 @@ import autophy, sys, os, subprocess, time, random
 
 def decisivate(starting_matrix, guidetree_path, configfile_path, wd, dbname):
 
-    global overwrite, friendly
+    global overwrite
 
     #############################################################################################
     #
@@ -78,14 +78,13 @@ def decisivate(starting_matrix, guidetree_path, configfile_path, wd, dbname):
     decisive_matrix = db.import_matrix_from_csv(path_to_decisive_csv, name, description, matrix_type, \
                                                     excluded_sequences = indecisive_sequence_ids, \
                                                     exclude_criterion = "indecisive", overwrite = overwrite, \
-                                                    friendly = friendly, date = time.time(), \
-                                                    parent_id = starting_matrix.matrix_id)
+                                                    date = time.time(), parent_id = starting_matrix.matrix_id)
     return decisive_matrix
 
 def derogueify(starting_matrix, wd):
     
     # general parameters
-    global overwrite, friendly, rseed, n_threads
+    global overwrite, rseed, n_threads
 
     # RAxML parameters
     global raxml_model, n_bootstrap_reps, raxml_bootstrap_out, raxml_validation_out
@@ -163,20 +162,22 @@ def derogueify(starting_matrix, wd):
     subprocess.call(args_roguenarok, stdout = roguenarok_std_out)
 
     # extract rogue taxon info from RogueNaRok output
-    roguefile = open(wd + "RogueNaRok_droppedRogues." + roguenarok_output_name, "rb")
+    roguefilename = wd + "RogueNaRok_droppedRogues." + roguenarok_output_name
     rogue_ncbi_ids = list()
-    i = 0
-    for line in roguefile:
-        if i < 2:
-            i += 1
-        else:
-            try:
-                taxon_list = line.split()[2].split(",")
-                for taxon in taxon_list:
-                    ncbi_id = taxon.split("_")[0]
-                    rogue_ncbi_ids.append(ncbi_id)
-            except IndexError:
-                pass
+    if os.path.exists(roguefilename):
+        roguefile = open(roguefilename, "rb")
+        i = 0
+        for line in roguefile:
+            if i < 2:
+                i += 1
+            else:
+                try:
+                    taxon_list = line.split()[2].split(",")
+                    for taxon in taxon_list:
+                        ncbi_id = taxon.split("_")[0]
+                        rogue_ncbi_ids.append(ncbi_id)
+                except IndexError:
+                    pass
 
     print "excluding rogue ncbi ids: " + ", ".join(rogue_ncbi_ids)
 
@@ -198,7 +199,7 @@ def derogueify(starting_matrix, wd):
 
     derogued_matrix = db.create_matrix(name, description, matrix_type, included_sequences = seqs, \
                                            excluded_taxa = rogue_ncbi_ids, exclude_criterion = "rogue", \
-                                           overwrite = overwrite, friendly = friendly, date = time.time(), \
+                                           overwrite = overwrite, date = time.time(), \
                                            parent_id = starting_matrix.matrix_id)
     return derogued_matrix
 
@@ -212,8 +213,7 @@ if __name__ == "__main__":
     oblivion = open("/dev/null", "wb")
 
     # setting general parameters
-    overwrite = True
-    friendly = False
+    overwrite = False
     rseed = "12345" # random.randint(1,100000000)
     n_threads = "16"    
 
@@ -289,8 +289,7 @@ if __name__ == "__main__":
 
         # create new matrix containing all seqs for species gathered above
         matrix = db.create_matrix(temp_matrix_name, temp_matrix_description, matrix_type="intermediate",  \
-                                      included_taxa = child_species_ids, overwrite = overwrite, \
-                                      friendly = friendly)
+                                      included_taxa = child_species_ids, overwrite = overwrite)
 
         # in the case that we find no sequences for this taxon, move on
         if matrix == None:
@@ -305,7 +304,7 @@ if __name__ == "__main__":
 
     optimized_matrix_ids = db.get_matrix_ids_by_type("optimized")
     optimized_matrix = db.combine_matrices(optimized_matrix_ids, name = "final", description = "final!", \
-                                               matrix_type="final", overwrite = overwrite, friendly = friendly)
+                                               matrix_type="final", overwrite = overwrite)
     optimized_matrix.export_alignment(wd)
 
     oblivion.close()
