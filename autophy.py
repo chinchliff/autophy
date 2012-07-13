@@ -952,16 +952,19 @@ class PhlawdRun_Source():
             raise IOError(message)
         self.db_path = os.path.realpath(os.path.join(self.reference_path, db_path_raw))
 
-        # check if the source db has anything in it
-	con = sqlite3.connect(self.db_path)
-	cur = con.cursor()
-	cur.execute("SELECT name FROM sqlite_master WHERE type='table';")
-	db_tablenames = [item[0] for item in cur.fetchall()]
-	con.close()
+        # validate the source db 
+        errormessage = "The database for this phlawd run doesn't seem to be valid."
+        try:
+            con = sqlite3.connect(self.db_path)
+            cur = con.cursor()
+            cur.execute("SELECT name FROM sqlite_master WHERE type=='table'")
+            db_tablenames = [item[0] for item in cur.fetchall()]
+            con.close()
+        except sqlite3.DatabaseError:
+            raise IOError(errormsg)
 
 	if "sequences" not in db_tablenames:
-            message = "The database for this phlawd run doesn't seem to be valid."
-            raise IOError(message)
+            raise IOError(errormsg)
 
         # db size checksum is used to make sure we don't import the same phlawdrun more than once
         self.db_size = os.path.getsize(self.db_path)
