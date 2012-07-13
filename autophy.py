@@ -975,8 +975,11 @@ class PhlawdRun_Source():
             line = l.strip()
             if len(line) > 0:
                 if line[0] != "#":
-                    elem = re.split(r"\=", line)
-                    self.parameters[string.lower(elem[0].strip())] = elem[1].strip()
+                    elem = line.split("=")
+                    try:
+                        self.parameters[string.lower(elem[0].strip())] = elem[1].strip()
+                    except IndexError:
+                        self.parameters[string.lower(elem[0].strip())] = None
                 self.configfile_text += line + "\n"
         configfile.close()
 
