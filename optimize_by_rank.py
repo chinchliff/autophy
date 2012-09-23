@@ -3,9 +3,9 @@ import autophy, sys, os, subprocess, time, random
 
 ###########################################################################################
 #
-#   we are taking a 3-step approach to dealing with matrix subsampling. 
+#   we take a 3-step approach to matrix subsampling. 
 #
-#   step 1 (currently this is not happening):
+#   step 1 (currently not happening):
 #   identify loci with high information content at deep nodes, using something
 #   like informativeness/decisiveness. record these, so that we can exclude them from
 #   subsampling by downstream methods (we want to keep them in the tree to inform the
@@ -206,7 +206,7 @@ def derogueify(starting_matrix, wd):
 if __name__ == "__main__":
 
     if len(sys.argv) < 3:
-        print "usage: optimize_by_rank.py database_filename rank [working directory]"
+        print "usage: optimize_by_rank.py <db> <rank> [<working_dir>]"
         sys.exit(0)
 
     # opening a file to nowhere for unwanted output

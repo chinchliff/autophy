@@ -7,13 +7,20 @@ class Database():
         self.dbname = dbname
         self.update_table_list()
 
-        if len(self.tables) < 2:
-            self.install_empty_recorddb_tables()
-            
-        self.update_matrix_list()
-        self.update_phlawdrun_list()
+        if "matrix" not in self.tables or "phlawdrun" not in self.tables:
+            print "database is in the wrong format. it will be blocked until it is re-initialized " \
+                  "with the .wipe() method (will also wipe all data except taxonomy)"
+            self.is_blocked = True
+        else:
+            self.is_blocked = False
+            if len(self.tables) < 2:
+                self.install_empty_recorddb_tables()
+            self.update_matrix_list()
+            self.update_phlawdrun_list()
 
     def combine_matrices(self, matrix_ids, **kwargs):
+        if self.is_blocked:
+            return
         # given an iterable of matrix ids, extract their included sequence ids
         # and combine them into a single matrix
 
@@ -26,6 +33,8 @@ class Database():
         return new_matrix
 
     def connection(self):
+        if self.is_blocked:
+            return
         con = sqlite3.connect(self.dbname)
         return con
 
@@ -44,6 +53,9 @@ class Database():
         #
         #####################################################################################################
 
+        if self.is_blocked:
+            return
+
         if date == None:
             date = time.time()
 
@@ -60,8 +72,8 @@ class Database():
                 seqs_to_include += [r[0] for r in cur.fetchall()]
         
         if hasattr(included_taxa,"__iter__"):
-            for ncbi_id in included_taxa:
-                cur.execute("SELECT id FROM sequences WHERE ncbi_id = ?;",(ncbi_id,))
+            for ncbi_tax_id in included_taxa:
+                cur.execute("SELECT id FROM sequences WHERE ncbi_tax_id = ?;",(ncbi_tax_id,))
                 seqs_to_include += [r[0] for r in cur.fetchall()]
         
         if not hasattr(included_sequences,"__iter__") and not hasattr(included_phlawdruns,"__iter__") and not \
@@ -80,8 +92,8 @@ class Database():
                 seqs_to_exclude += [r[0] for r in cur.fetchall()]
 
         if hasattr(excluded_taxa,"__iter__"):
-            for ncbi_id in excluded_taxa:
-                cur.execute("SELECT id FROM sequences WHERE ncbi_id = ?;",(ncbi_id,))
+            for ncbi_tax_id in excluded_taxa:
+                cur.execute("SELECT id FROM sequences WHERE ncbi_tax_id = ?;",(ncbi_tax_id,))
                 seqs_to_exclude += [r[0] for r in cur.fetchall()]
 
         seqs_to_include = list(set(seqs_to_include) - set(seqs_to_exclude))
@@ -154,6 +166,9 @@ class Database():
 #################################################################
 
     def get_matrix_ids_by_type(self, matrix_type):
+        if self.is_blocked:
+            return
+
         con = sqlite3.connect(self.dbname)
         cur = con.cursor()
         cur.execute("SELECT id FROM matrix_type WHERE name == ?;", (matrix_type,))
@@ -172,23 +187,38 @@ class Database():
         return matrix_ids
 
     def get_matrix_by_name(self, matrix_name):
+        if self.is_blocked:
+            return
+
         the_matrix = Matrix(self.dbname, matrix_name=matrix_name)
         return the_matrix
 
     def get_matrix_by_id(self, matrix_id):
+        if self.is_blocked:
+            return
+
         the_matrix = Matrix(self.dbname, matrix_id=matrix_id)
         return the_matrix
 
     def get_phlawdrun_by_id(self, phlawdrun_id):
+        if self.is_blocked:
+            return
+
         the_phlawdrun = PhlawdRun(self.dbname, phlawdrun_id=phlawdrun_id)
         return the_phlawdrun
 
     def get_sequence_by_id(self, seq_id):
+        if self.is_blocked:
+            return
+
         the_sequence = Sequence(self.dbname, seq_id)
         return the_sequence
 
     def import_matrix_from_csv(self, path_to_csv_file, name, description, matrix_type, \
                                    taxon_name_column_header = "taxon", **kwargs):
+
+        if self.is_blocked:
+            return
 
         con = sqlite3.connect(self.dbname)
         cur = con.cursor()
@@ -201,14 +231,14 @@ class Database():
         # gather all the sequence ids to be included in this matrix
         seq_ids = list()
         for row in csv_matrix:
-            # the ncbi_id is recorded as the first part of the taxon name; we can extract it with:
-            ncbi_id = row[taxon_name_column_header].split("_")[0]
+            # the ncbi_tax_id is recorded as the first part of the taxon name; we can extract it with:
+            ncbi_tax_id = row[taxon_name_column_header].split("_")[0]
             for phlawdrun in colnames:
                 # similarly, the phlawdrun db id is recorded as the *last* part of the column name:
                 phlawdrun_id = phlawdrun.rsplit("_",1)[1]
                 if int(row[phlawdrun]) == 1:
-                    cur.execute("SELECT id FROM sequences WHERE phlawdrun_id == ? AND ncbi_id == ?;", \
-                                    (phlawdrun_id, ncbi_id))
+                    cur.execute("SELECT id FROM sequences WHERE phlawdrun_id == ? AND ncbi_tax_id == ?;", \
+                                    (phlawdrun_id, ncbi_tax_id))
                     r = cur.fetchone()
                     seq_ids.append(r[0])
         
@@ -219,6 +249,9 @@ class Database():
         return new_matrix
 
     def import_phlawdruns_from_dir(self, dir_to_import, config_file_suffix = ".phlawd"):
+        if self.is_blocked:
+            return
+
         # point this to a directory containing successfully assembled phlawd config files 
 	filelist = os.listdir(dir_to_import)
 
@@ -233,6 +266,8 @@ class Database():
         self.update_phlawdrun_list()
 
     def import_phlawdrun_from_source_object(self, phlawdrun_source_to_import):
+        if self.is_blocked:
+            return
         
         runsource = phlawdrun_source_to_import
 
@@ -250,7 +285,7 @@ class Database():
             if name in fields:
                 if name not in matched:
                     if name == "clade":
-                        # look up the ncbi_id for clade in the config file
+                        # look up the ncbi_tax_id for clade in the config file
                         cur.execute("SELECT taxonomy.ncbi_id from taxonomy where taxonomy.name = ?;",(value,)) 
                         params_valid["clade_id"] = cur.fetchone()[0]
                     params_valid[name] = value
@@ -273,18 +308,18 @@ class Database():
         results = dict(cur.fetchall())
 
         # check if this phlawdrun has already been imported
-        duplicate_accession_ids = []
+        duplicate_gis = []
         if runsource.db_size in results.keys():
 
             # it's a duplicate, use preexisting dbid
             phlawdrun_id = results[runsource.db_size]
 
             print "This phlawd run has already been stored. Checking for associated stored sequences."
-            cur.execute("SELECT accession_id FROM sequences WHERE phlawdrun_id = ?;",(phlawdrun_id,))
-            duplicate_accession_ids = [item[0] for item in cur.fetchall()]
+            cur.execute("SELECT gi FROM sequences WHERE phlawdrun_id = ?;",(phlawdrun_id,))
+            duplicate_gis = [item[0] for item in cur.fetchall()]
 
             print "Found %s sequence records already imported from this phlawd run, " \
-                              "these will not be imported again." % len(duplicate_accession_ids)
+                              "these will not be imported again." % len(duplicate_gis)
         else:
             # store this phlawdrun
             insert_query = "INSERT INTO phlawdrun (" + ",".join(fieldnames) + ") " \
@@ -299,11 +334,12 @@ class Database():
         con.close()
 
         this_phlawdrun = self.get_phlawdrun_by_id(phlawdrun_id)
-        this_phlawdrun.import_sequences_from_source_db(seqs_to_exclude=duplicate_accession_ids)
+        this_phlawdrun.import_sequences_from_source_db(seqs_to_exclude=duplicate_gis)
 
         return this_phlawdrun
 
     def install_empty_recorddb_tables(self):
+
 	con = sqlite3.connect(self.dbname)
         # we use safecursor's pexecute method to attempt CREATE calls; it prints alerts but 
         # doesn't terminate the program if the table/index we're trying to create already exists.
@@ -312,15 +348,16 @@ class Database():
         ### sequences table contains sequence data from phlawdruns
 	cur.pexecute("CREATE TABLE sequences (" \
 	      "id INTEGER PRIMARY KEY, " \
-	      "ncbi_id INTEGER, " \
+	      "ncbi_tax_id INTEGER, " \
 	      "phlawdrun_id INTEGER, " \
-	      "accession_id VARCHAR(128), " \
+	      "gi VARCHAR(128), " \
 	      "gene, " \
+              "tax_name, " \
 	      "seq LONGTEXT, " \
 	      "seq_aligned LONGTEXT);")
 
-	cur.pexecute("CREATE INDEX sequences_ncbi_id on sequences(ncbi_id);")
-	cur.pexecute("CREATE INDEX sequences_accession_id on sequences(accession_id);")
+	cur.pexecute("CREATE INDEX sequences_ncbi_tax_id on sequences(ncbi_tax_id);")
+	cur.pexecute("CREATE INDEX sequences_gi on sequences(gi);")
 	cur.pexecute("CREATE INDEX sequences_phlawdrun_id on sequences(phlawdrun_id);")
 
         ### phlawdrun table contains info from phlawd config files, etc.
@@ -394,7 +431,7 @@ class Database():
                 ("default", "the most inclusive matrix, consisting of all sequences from all phlawdruns. " \
                      "there can be only one."),
                 ("intermediate", "a matrix used for sampling optimization, often corresponding to a single " \
-                     "clade or locus. used to generate sampling matrices (e.g. for decisivator) or set of " \
+                     "clade or locus. used to generate sampling matrices (e.g. for decisivator) or sets of " \
                      "trees (e.g. for roguenarok). not used for final tree-searching"), \
                 ("optimized", "an intermediate matrix that has been fully subsampled to exclude taxa that " \
                      "may be problematic for downstream tree-searches. the set of optimized matrices is used " \
@@ -471,9 +508,12 @@ class Database():
 
     def install_taxonomy(self):
         print "Not implemented due to speed. Use the phlawd executable to build a sequence database " \
-            "and then use autophy.wipe(database_filename) clear it of all non-taxonomic data."
+            "and then use autophy.wipe(database_filename) to clear it of all non-taxonomic data."
 
     def remove_matrix_by_id(self, matrix_id):
+        if self.is_blocked:
+            return
+
         con = sqlite3.connect(self.dbname)
         cur = con.cursor()
 
@@ -497,6 +537,9 @@ class Database():
         self.update_matrix_list()
 
     def remove_matrix_by_name(self, matrix_name):
+        if self.is_blocked:
+            return
+
         con = sqlite3.connect(self.dbname)
         cur = con.cursor()
         cur.execute("SELECT id FROM matrix WHERE name == ?;", (matrix_name,)) 
@@ -511,6 +554,9 @@ class Database():
         con.close()
 
     def update_default_matrix(self):
+        if self.is_blocked:
+            return
+
         # currently quite incomplete...
         try:
             cur_default_matrix = self.get_matrix_by_name("default")            
@@ -527,6 +573,9 @@ class Database():
             
 
     def update_matrix_list(self):
+        if self.is_blocked:
+            return
+
         con = sqlite3.connect(self.dbname)
         cur = con.cursor()
 
@@ -534,6 +583,9 @@ class Database():
         self.matrices = [(row[0], row[1]) for row in cur.fetchall()]
 
     def update_phlawdrun_list(self):
+        if self.is_blocked:
+            return
+
         con = sqlite3.connect(self.dbname)
         cur = con.cursor()
 
@@ -549,6 +601,7 @@ class Database():
         # store a list of all tables
         cur.execute("SELECT name FROM sqlite_master WHERE type='table';")
         self.tables = [row[0] for row in cur.fetchall()]
+
         con.close()
 
     def wipe(self,dbname = None):
@@ -569,11 +622,18 @@ class Database():
                 query = "DROP TABLE %s" % t_name 
                 cur.pexecute(query)      # pexecute method ignores trivial errors
                 con.commit()
-
         con.close()
+
+        confirm_unlocked = False;
+        if self.is_blocked:
+            self.is_blocked = False
 
         self.install_empty_recorddb_tables()
         self.update_table_list()
+
+        if confirm_unlocked:
+            print "database has been reinitialized and is now unlocked"
+
 
 class Matrix():
     def __init__(self, dbname, matrix_id=None, matrix_name=None):
@@ -649,13 +709,13 @@ class Matrix():
         # concatenate aligned sequences and write them to the alignment file
         i = 0
         report_interval = 1000
-        for taxon, ncbi_id in [(uid, nid) for uid, nid, name in self.taxa]:
+        for taxon, ncbi_tax_id in [(uid, nid) for uid, nid, name in self.taxa]:
             line = taxon + " "
 
             # gather all sequences for this taxon
             cur.execute("SELECT phlawdrun.filename, phlawdrun.id, sequences.seq_aligned FROM " \
-                            "sequences, phlawdrun WHERE sequences.ncbi_id = ? " \
-                            "AND sequences.phlawdrun_id = phlawdrun.id;", (ncbi_id,))
+                            "sequences, phlawdrun WHERE sequences.ncbi_tax_id = ? " \
+                            "AND sequences.phlawdrun_id = phlawdrun.id;", (ncbi_tax_id,))
             sequences = dict([(pfname + "_" + str(pid), seq) for pfname, pid, seq in cur.fetchall()])
 
             # for each partition, see if we have a matching sequence, if not then make an empty one
@@ -779,7 +839,7 @@ class Matrix():
         # creates a large 2-d dict containing sampling information for this matrix. each "row" in
         # the dict corresponds to a taxon, and contains a dict with "columns" that contain
         # presence/absence codings for each phlawdrun. the keys of the dict are unique identifiers
-        # consisting of taxa/phlawdrun names concatenated with their ncbi_id or dbid, respectively
+        # consisting of taxa/phlawdrun names concatenated with their ncbi_tax_id or dbid, respectively
 
         con = sqlite3.connect(self.dbname)
         cur = con.cursor()
@@ -796,11 +856,11 @@ class Matrix():
 
         i = 0
         report_interval = 1000
-        for taxon, ncbi_id in [(uid, nid) for uid, nid, name in self.taxa]:
+        for taxon, ncbi_tax_id in [(uid, nid) for uid, nid, name in self.taxa]:
 
             # gather sampling information from the db 
             cur.execute("SELECT phlawdrun.filename, phlawdrun.id FROM phlawdrun, sequences WHERE " \
-                "phlawdrun.id = sequences.phlawdrun_id AND sequences.ncbi_id = ?;", (ncbi_id,))
+                "phlawdrun.id = sequences.phlawdrun_id AND sequences.ncbi_tax_id = ?;", (ncbi_tax_id,))
             runs_present = [p[0] + self.r_char + str(p[1]) for p in cur.fetchall()]
 
             # fill "cells" in matrix dict according to sequences present
@@ -822,16 +882,16 @@ class Matrix():
         # get info for all taxa represented by sequences present in this matrix
         cur.execute("SELECT ncbi_id, name FROM taxonomy WHERE " \
             "name_class = 'scientific name' AND taxonomy.ncbi_id IN (" \
-            "SELECT DISTINCT ncbi_id FROM sequences WHERE sequences.id IN (" \
+            "SELECT DISTINCT ncbi_tax_id FROM sequences WHERE sequences.id IN (" \
             "SELECT sequence_id FROM sequence_matrix_include_map WHERE matrix_id = ?));", (self.matrix_id,))
 
         self.taxa = list()
         for t in cur.fetchall():
-            t_ncbi_id = t[0]
+            t_ncbi_tax_id = t[0]
             # replace non-alphanumeric strings with underscores
             t_name = self.r_char.join(re.sub(r"[" + string.punctuation + "\s]+"," ",t[1]).split())
-            t_unique_id = str(t_ncbi_id) + self.r_char + t_name
-            self.taxa.append((t_unique_id, t_ncbi_id, t_name))
+            t_unique_id = str(t_ncbi_tax_id) + self.r_char + t_name
+            self.taxa.append((t_unique_id, t_ncbi_tax_id, t_name))
 
         con.close()        
 
@@ -900,26 +960,27 @@ class PhlawdRun():
 
                 # gather info for records from source db
                 seqs_to_store = list()
-                for s in aligned_seq_records[start:end]:
-                    seq_id = s[0]
+                for thisseq in aligned_seq_records[start:end]:
+                    seq_id = thisseq[0]
 
                     # get additional sequence metadata from the sequences table in source db
-                    pcur.execute("SELECT ncbi_id, sequence, accession FROM sequences WHERE sequences.id = ?",(seq_id,))
-                    r = pcur.fetchone()
+                    pcur.execute("SELECT ncbi_tax_id, sequence, gi, tax_name FROM sequences WHERE sequences.id = ?",(seq_id,))
+                    res = pcur.fetchone()
 
                     newrecord = dict()
-                    newrecord["ncbi_id"] = r[0]
+                    newrecord["ncbi_tax_id"] = res[0]
                     newrecord["gene"] = self.gene_name
-                    newrecord["seq"] = r[1]
-                    newrecord["accession_id"] = r[2]
-                    newrecord["seq_aligned"] = s[1]
+                    newrecord["seq"] = res[1]
+                    newrecord["gi"] = res[2]
+                    newrecord["seq_aligned"] = thisseq[1]
+                    newrecord["tax_name"] = res[3]
                     newrecord["phlawdrun_id"] = self.database_id
 
                     seqs_to_store.append(newrecord)
 
                 # store records in record db (if they aren't already there)
                 for record in seqs_to_store:
-                    if record["accession_id"] not in seqs_to_exclude:
+                    if record["gi"] not in seqs_to_exclude:
                         insert_query = "INSERT INTO sequences (" + ",".join(record.keys()) + ") " \
                                        "VALUES (" + ",".join(["?"] * len(record)) + ");"
                         cur.execute(insert_query,tuple(record.values()))
@@ -1025,7 +1086,7 @@ class Sequence():
         colnames += ["taxonomy.name",]
 
         query_text = "SELECT " + ", ".join(colnames) + " FROM taxonomy INNER JOIN sequences ON " \
-                        "taxonomy.ncbi_id == sequences.ncbi_id WHERE taxonomy.name_class == " \
+                        "taxonomy.ncbi_id == sequences.ncbi_tax_id WHERE taxonomy.name_class == " \
                         "'scientific name' AND sequences.id == ?;"
 
         cur.execute(query_text,(sequence_id,))
@@ -1064,8 +1125,8 @@ class Taxonomy():
         r = cur.fetchone()
         
         try:
-            ncbi_id = r[0] 
-            taxon = Taxon(self.dbname, ncbi_id)
+            ncbi_tax_id = r[0] 
+            taxon = Taxon(self.dbname, ncbi_tax_id)
         except TypeError:
             raise NameError("No taxon by that name could be found.")
 
