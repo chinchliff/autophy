@@ -2,7 +2,7 @@
 *.pyc
 .*
 *#
-gbpln.db
+*.db
 *.phy
 *.log
 *.csv
