@@ -315,8 +315,20 @@ class Database():
             phlawdrun_id = results[runsource.db_size]
 
             print "This phlawd run has already been stored. Checking for associated stored sequences."
-            cur.execute("SELECT gi FROM sequences WHERE phlawdrun_id = ?;",(phlawdrun_id,))
+            cur.execute("SELECT gi FROM sequences WHERE phlawdrun_id == ?;",(phlawdrun_id,))
             duplicate_gis = [item[0] for item in cur.fetchall()]
+
+#            newpath = runsource.db_path;
+#            print newpath
+#            exit()
+
+            # in case the phlawdrun has been moved, update the path to the current location
+            cur.execute("UPDATE phlawdrun SET fullpath = ? WHERE id == ?;",(runsource.db_path, phlawdrun_id))
+            cur.execute("UPDATE phlawdrun SET phlawddb = ? WHERE id == ?;",(runsource.db_path, phlawdrun_id))
+            con.commit();
+#            cur.execute("SELECT fullpath FROM phlawdrun WHERE id == ?;",(phlawdrun_id,))
+#            newpath = cur.fetchone()
+#            print newpath
 
             print "Found %s sequence records already imported from this phlawd run, " \
                               "these will not be imported again." % len(duplicate_gis)
@@ -611,6 +623,8 @@ class Database():
         con = sqlite3.connect(dbname)
         cur = con.cursor(sqlite3_extensions.safecursor)
 
+        print "removing all tables except taxonomy (could take a while)"
+
         # in case of foreign key constraints, we may need to make more than one pass
         # to clear all tables. how best to do this is not clear, but for now we have
         # no fk constraints so we make only one pass
@@ -622,17 +636,24 @@ class Database():
                 query = "DROP TABLE %s" % t_name 
                 cur.pexecute(query)      # pexecute method ignores trivial errors
                 con.commit()
+
+        print "tables have been removed. now shrinking db file (may also take a while)"
+        con.execute("VACUUM;")
         con.close()
 
-        confirm_unlocked = False;
+        confirm_unlocked = False
         if self.is_blocked:
             self.is_blocked = False
+            confirm_unlocked = True
 
+        print "shrinking complete. installing new tables"
         self.install_empty_recorddb_tables()
         self.update_table_list()
 
         if confirm_unlocked:
-            print "database has been reinitialized and is now unlocked"
+            print "database has been wiped and is now unlocked"
+        else:
+            print "database has been wiped"
 
 
 class Matrix():
@@ -927,6 +948,8 @@ class PhlawdRun():
 
     def import_sequences_from_source_db(self, seqs_to_exclude=[]):
         # open db connections
+
+#        print "'" + self.phlawd_dbname + "'"
         phlawddb_con = sqlite3.connect(self.phlawd_dbname)
         recorddb_con = sqlite3.connect(self.dbname)
         pcur = phlawddb_con.cursor()
