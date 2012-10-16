@@ -18,6 +18,16 @@ class Database():
             self.update_matrix_list()
             self.update_phlawdrun_list()
 
+        self.remove_temporary_matrices();
+
+    def remove_temporary_matrices(self):
+        con = sqlite3.connect(self.dbname)
+        cur = con.cursor()
+        cur.execute("SELECT id FROM matrix WHERE matrix_type_id IN (SELECT id FROM matrix_type WHERE name == 'temporary');")
+        temp_matrix_ids = [r[0] for r in cur.fetchall()]
+        for tid in temp_matrix_ids:
+            self.remove_matrix_by_id(tid)
+
     def combine_matrices(self, matrix_ids, **kwargs):
         if self.is_blocked:
             return
@@ -164,6 +174,21 @@ class Database():
 #   information about flagged sequences?
 #
 #################################################################
+
+    def find_matrices_by_gene_name_search(self, gene_query_string):
+
+        matrix_ids = []
+
+        con = sqlite3.connect(self.dbname)
+        cur = con.cursor()
+        cur.execute("SELECT id FROM phlawdrun WHERE gene LIKE ?;", ("%"+gene_query_string+"%",))
+
+        results = cur.fetchall()
+        for match in results:
+            matrix_ids.append(match[0])
+
+        return matrix_ids
+       
 
     def get_matrix_ids_by_type(self, matrix_type):
         if self.is_blocked:
@@ -449,7 +474,9 @@ class Database():
                      "may be problematic for downstream tree-searches. the set of optimized matrices is used " \
                      "to generate the final matrix"), \
                 ("final", "the final matrix, generated through combination of optimized (subsampled) " \
-                     "submatrices of the default (all-inclusive) matrix, to be used for end-product tree-searching")))
+                     "submatrices of the default (all-inclusive) matrix, to be used for end-product tree-searching"), \
+                ("temporary", "a matrix constructed for a temporary purpose, which should be deleted after use." \
+                     "these are deleted automatically whenever the database is loaded by autophy." )))
 
         for matrix_type in matrix_types:
             cur.pexecute("INSERT INTO matrix_type(name, description) VALUES (?, ?);", matrix_type)

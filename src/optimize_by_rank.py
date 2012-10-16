@@ -206,7 +206,7 @@ def derogueify(starting_matrix, wd):
 if __name__ == "__main__":
 
     if len(sys.argv) < 3:
-        print "usage: optimize_by_rank.py <db> <rank> [<working_dir>]"
+        print "usage: optimize_by_rank.py <db> <rank> <rootclade> [<working_dir>]"
         sys.exit(0)
 
     # opening a file to nowhere for unwanted output
@@ -231,14 +231,16 @@ if __name__ == "__main__":
     # process command line args
     dbname = sys.argv[1]
     rank_to_optimize = sys.argv[2]
+    root_clade = sys.argv[3]
+
     try:
-        wd = sys.argv[3].rstrip("/") + "/"
+        wd = sys.argv[4].rstrip("/") + "/"
     except IndexError:
         wd = ""
 
     # get info for subtree of interest; setting root node manually
     t = autophy.Taxonomy(dbname)
-    root = t.get_taxon_by_name("Streptophytina")
+    root = t.get_taxon_by_name(rootclade)
 
     # get list of taxa of desired rank within tree of interest
     taxa_to_optimize = root.get_depth_n_children_by_rank(rank_to_optimize)
