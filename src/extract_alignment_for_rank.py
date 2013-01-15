@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-import autophy, sys
+import autophy, sys, re
 
 if __name__ == "__main__":
 
@@ -112,7 +112,7 @@ if __name__ == "__main__":
         if len(curtax_seqs) < 1:
             continue
         else:
-            alignment.write(re.sub(r"[ .!@#$%^&*(){}[]:;\"'<>?,./|\\+=~`]+", r"_", exemplified_taxon) + " ")
+            alignment.write(re.sub(r"[ ,./;'\[\]<>?|:\"\\{}!@#$%^&*()-+=~`]+", "_", exemplified_taxon) + " ")
 
         # for every phlawdrun, write a seq if we have one, or missing data if not
         for pid in phlawdrun_lengths.iterkeys():
