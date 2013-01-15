@@ -17,8 +17,7 @@ class Database():
                 self.install_empty_recorddb_tables()
             self.update_matrix_list()
             self.update_phlawdrun_list()
-
-        self.remove_temporary_matrices();
+            self.remove_temporary_matrices()
 
     def remove_temporary_matrices(self):
         con = sqlite3.connect(self.dbname)
@@ -973,6 +972,25 @@ class PhlawdRun():
 
         con.close()
 
+    def get_included_sequence_ids(self, ncbi_tax_id = None):
+        
+        con = sqlite3.connect(self.dbname)
+        cur = con.cursor()
+
+        if ncbi_tax_id == None:
+            cur.execute("SELECT id FROM sequences WHERE phlawdrun_id == ?", (self.database_id, ))
+        else:
+            taxonomy = Taxonomy(self.dbname)
+            target = taxonomy.get_taxon_by_ncbi_id(ncbi_tax_id)
+            cur.execute("SELECT id FROM sequences WHERE phlawdrun_id == ? AND ncbi_tax_id IN " \
+                            "(SELECT ncbi_id FROM taxonomy WHERE left_value > ? AND right_value < ?)", \
+                            (self.database_id, target.left_value, target.right_value))
+        results = cur.fetchall()
+        con.close()
+
+        # return the ids for all sequences from this phlawdrun
+        return [r[0] for r in results]
+
     def import_sequences_from_source_db(self, seqs_to_exclude=[]):
         # open db connections
 
@@ -1159,7 +1177,7 @@ class Sequence():
                 int_value = int(value)
                 exec_str += str(int_value)
             except ValueError:
-                exec_str += "'" + value + "'"
+                exec_str += "'" + re.sub("'","\\'",value) + "'"
             exec exec_str
 
 class Taxonomy():
@@ -1171,6 +1189,7 @@ class Taxonomy():
         con = sqlite3.connect(self.dbname)
         cur = con.cursor()
 
+        # could be a problem if there is more than one taxon with the same name
         cur.execute("SELECT ncbi_id FROM taxonomy WHERE name = ? AND name_class = ?;", (name, name_class))
         r = cur.fetchone()
         
@@ -1227,23 +1246,39 @@ class Taxon():
         con = sqlite3.connect(self.dbname)
         cur = con.cursor()
 
-        # get all records of desired rank
-        cur.execute("SELECT name, ncbi_id, left_value, right_value FROM taxonomy WHERE " \
-                        "node_rank == ? AND name_class == ?;", (rank, name_class))
+        # get all records of desired rank that are children of this taxon
+        cur.execute("SELECT name, ncbi_id FROM taxonomy WHERE node_rank == ? AND " \
+                        "name_class == ? AND left_value > ? AND right_value < ?;", \
+                        (rank, name_class, self.left_value, self.right_value))
+        records = cur.fetchall()
+        con.close()
+
+        # return the name and ncbi id for each identified child
+        return [(name, ncbi_id) for name, ncbi_id in records]
+
+    def get_all_child_sequence_ids(self):
+        
+        con = sqlite3.connect(self.dbname)
+        cur = con.cursor()
+
+        cur.execute("SELECT sequences.id FROM sequences INNER JOIN taxonomy ON taxonomy.ncbi_id == sequences.ncbi_tax_id " \
+                        "WHERE taxonomy.left_value >= ? AND taxonomy.right_value <= ?", (self.left_value, self.right_value))
         records = cur.fetchall()
 
-        # record only records that are children of this taxon
-        children = list()
-        for r in records:
-            this_name = r[0]
-            this_ncbi_id = r[1]
-            lval = r[2]
-            rval = r[3]
-            if lval > self.left_value and rval < self.right_value:
-                children.append((this_name, this_ncbi_id))
+        # return the id for each identified sequence 
+        return [r[0] for r in records]
 
-        con.close()
-        return children
+    def get_all_related_phlawdrun_ids(self):
+
+        con = sqlite3.connect(self.dbname)
+        cur = con.cursor()
+
+        cur.execute("SELECT DISTINCT phlawdrun_id FROM sequences INNER JOIN taxonomy ON taxonomy.ncbi_id == sequences.ncbi_tax_id " \
+                        "WHERE taxonomy.left_value >= ? AND taxonomy.right_value <= ?", (self.left_value, self.right_value))
+        records = cur.fetchall()
+
+        # return the id for each identified phlawdrun
+        return [r[0] for r in records]
 
     def get_newick_subtree(self):
         # calls a recursive function that writes a newick string for
@@ -1297,4 +1332,3 @@ class Taxon():
 
         tree_str = get_newick_str(self.ncbi_id, self.dbname)
         return tree_str
-
