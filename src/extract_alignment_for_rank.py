@@ -1,20 +1,32 @@
 #!/usr/bin/env python
-import autophy, sys, re
+import autophy, sys, re, os, subprocess
+from copy import deepcopy as copy
 
 if __name__ == "__main__":
 
     if len(sys.argv) < 4:
-        print "usage: extract_alignment_for_clade.py <db> \"<taxname1>,[<taxname2>],...\" <rank>"
+        print "usage: extract_alignment_for_clade.py <db> \"<taxname1>,[<taxname2>],...\" <rank> [<outgroup=outgroup>] [<consense=Y|N>]"
         sys.exit(0)
+
+    # initializing optional parameters
+    outgroupname = None
+    consense = False
 
     # process command line args
     dbname = sys.argv[1]
     cladenames = [n.strip() for n in sys.argv[2].split(",")]
     target_rank = sys.argv[3]
+
+    # set optional parameters
     if len(sys.argv) > 4:
-        outgroupname = sys.argv[4]
-    else:
-        outgroupname = None
+        for arg in sys.argv[4:]:
+            argname, argval = arg.split("=")
+
+            if argname == "outgroup":
+                outgroupname = value
+            elif argname == "consense":
+                if argval == "Y":
+                    consense = True
 
     db = autophy.Database(dbname)
     taxonomy = autophy.Taxonomy(dbname)
@@ -32,7 +44,11 @@ if __name__ == "__main__":
         else:
             target_children_ncbi_ids += [taxon.ncbi_id]            
 
-    # will hold all exemplar sequences, indexed by target taxon and phlawdrun
+    if consense:
+        # will hold all seqs for each taxon/gene, which will be used to build a consensus used as an exemplar
+        allseqs_allgenes_alltaxa = dict()
+
+    # will hold the final seq for each taxon/gene. will either be the longest or the consensus of all
     exemplars = dict()
 
     i = 1
@@ -43,26 +59,81 @@ if __name__ == "__main__":
         seq_ids = target.get_all_child_sequence_ids()
         print "Taxon " + str(i) + "/" + str(ntax_total) + " " + target.scientific_name + " (" + str(len(seq_ids)) + " seqs total)"
 
-        # will hold just exemplar seqs for this target
-        target_exemplar_seqs = dict()
+        # will hold just seqs for this target
+        target_seqs = dict()
 
+        # process all available seqs for this target
         # iterate over all child seqs simultaneously; faster than doing phlawdruns individually
         for sid in seq_ids:
-            Seq = db.get_sequence_by_id(sid)
-            slen = len(Seq.seq_aligned)
+            candidate = db.get_sequence_by_id(sid)
 
-            # record the seq if it is better than the prev recorded seq
-            if Seq.phlawdrun_id in target_exemplar_seqs.keys():
-                prev_best_seq_len = len(target_exemplar_seqs[Seq.phlawdrun_id].seq_aligned)
-                if slen > prev_best_seq_len:
-                    target_exemplar_seqs[Seq.phlawdrun_id] = Seq
+            if consense:
+                
+                # add an entry for this phlawdrun if it hasn't been seen yet
+                if candidate.phlawdrun_id not in target_seqs.keys():
+                    target_seqs[candidate.phlawdrun_id] = []
+ 
+                # add this sequence to the target seqs
+                target_seqs[candidate.phlawdrun_id].append(candidate)
 
-            # if this is the first seq from this phlawdrun, record it
             else:
-                target_exemplar_seqs[Seq.phlawdrun_id] = Seq
 
-        # add this target's exemplars to the master dict
-        exemplars[target.scientific_name] = target_exemplar_seqs
+                # if this is the first seq from this phlawdrun, record it
+                if candidate.phlawdrun_id not in target_seqs.keys():
+                    target_seqs[candidate.phlawdrun_id] = candidate
+
+                else:
+                    # record the seq if it is better than the prev recorded seq
+                    if len(candidate.seq_aligned) > len(target_exemplar_seqs[cur_seq.phlawdrun_id]):
+                        target_seqs[candidate.phlawdrun_id] = candidate
+
+        if consense:
+
+            # make consensus seqs for all seqs from each gene and add them to the dict 
+            target_consensus_seqs = dict()
+
+            for phlawdrun_id, phlawdrun_seqs in target_seqs.iteritems():
+                temp_path = "extract_seqs_TEMP"
+                try:
+                    os.mkdir(temp_path)
+                except OSError:
+                    pass
+
+                print "consensing " + str(len(phlawdrun_seqs)) + " seq from phlawdrun " + str(phlawdrun_id)
+
+                # write all seqs for this taxon/phlawdrun to a file 
+                temp_file_path = temp_path + "/" + str(phlawdrun_id) + ".allseqs.fasta"
+                temp_file = open(temp_file_path,"w")
+                for index, seq_obj in enumerate(phlawdrun_seqs):
+                    temp_file.write(">" + str(index) + "\n")
+                    temp_file.write(seq_obj.seq_aligned + "\n")
+                temp_file.close()
+
+                # use pxconseq to make consensus
+                pxconseq_args = ["pxconseq", "-s", temp_file.name]
+                p1 = subprocess.Popen(pxconseq_args, stdout=subprocess.PIPE)
+                pxconseq_out = p1.communicate()[0]
+                consensus = pxconseq_out.split(">consensus\n")[1].strip()
+
+                # hack a preexisting Sequence object to avoid having to create a new one in the db
+                conseq = copy(phlawdrun_seqs[0])
+                conseq.dbid = "(consensus)"
+                conseq.gi = "(consensus)"
+                conseq.seq = ""
+                conseq.ncbi_tax_id = target_ncbi_id
+                conseq.taxon_name = target.scientific_name
+
+                # store the consensus sequence in the hacked Sequence obj
+                conseq.seq_aligned = consensus
+
+                # store the hacked seq obj in the consensus dict
+                target_consensus_seqs[phlawdrun_id] = conseq
+
+            # replace the full dict of all seqs with just the consensus seqs
+            target_seqs = target_consensus_seqs
+        
+        # add this target's seqs to the master dict
+        exemplars[target.scientific_name] = target_seqs
         i += 1
 
     if len(cladenames) > 1:
@@ -86,7 +157,7 @@ if __name__ == "__main__":
             continue
 
         for pid, seq in curtax_seqs.iteritems():
-
+                
             # record each sequence's metadata
             phlawdrun = db.get_phlawdrun_by_id(pid)
             recordfile.write(exemplified_taxon.replace(" ","_") + "," + phlawdrun.gene_name  + "," + seq.taxon_name + "," + \
