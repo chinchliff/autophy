@@ -5,33 +5,51 @@ from copy import deepcopy as copy
 if __name__ == "__main__":
 
     if len(sys.argv) < 4:
-        print "usage: extract_alignment_for_clade.py <db> \"<taxname1>,[<taxname2>],...\" <rank> [<outgroup=outgroup>] [<consense=Y|N>]"
+        print "usage: extract_alignment_for_clade.py <db> rank=<rank> include=\"<tx1>,[<tx2>],...\" [exclude=\"<tx3>,<tx4>,...\"] [consense=<Y>]"
         sys.exit(0)
-
-    # initializing optional parameters
-    outgroupname = None
-    consense = False
 
     # process command line args
     dbname = sys.argv[1]
-    cladenames = [n.strip() for n in sys.argv[2].split(",")]
-    target_rank = sys.argv[3]
+
+    # initializing parameters
+    consense = False
+    target_rank = ""
+    cladenames = []
+    exclude_names = []
 
     # set optional parameters
-    if len(sys.argv) > 4:
-        for arg in sys.argv[4:]:
-            argname, argval = arg.split("=")
+    for arg in sys.argv[2:]:
+        argname, argval = arg.split("=")
 
-            if argname == "outgroup":
-                outgroupname = value
-            elif argname == "consense":
-                if argval == "Y":
-                    consense = True
+        if argname == "rank":
+            target_rank = argval
+
+        elif argname == "include":
+            cladenames = [n.strip() for n in argval.split(",")]
+
+        elif argname == "exclude":
+            exclude_names = [n.strip() for n in argval.split(",")]
+
+        elif argname == "consense":
+            if argval == "Y":
+                consense = True
+
+    assert(len(cladenames) > 0)
+    assert(target_rank != "")
 
     db = autophy.Database(dbname)
     taxonomy = autophy.Taxonomy(dbname)
 
-    # get all children of specified rank for all named taxa 
+    # get taxa to exclude
+    excluded_taxa = []
+    print "excluding:"
+    for name in exclude_names:
+        
+        print "    " + name
+        taxon = taxonomy.get_taxon_by_name(name)
+        excluded_taxa.append(taxon)
+
+    # get all included taxa of specified rank
     target_children_ncbi_ids = list()
     for name in cladenames:
 
@@ -39,7 +57,7 @@ if __name__ == "__main__":
         taxon = taxonomy.get_taxon_by_name(name)
         if taxon.node_rank != target_rank:
             # get children, add them to list
-            target_children = taxon.get_depth_n_children_by_rank(target_rank)
+            target_children = taxon.get_depth_n_children_by_rank(target_rank,excluded_taxa=excluded_taxa)
             target_children_ncbi_ids += list(zip(*target_children)[1])
         else:
             target_children_ncbi_ids += [taxon.ncbi_id]            

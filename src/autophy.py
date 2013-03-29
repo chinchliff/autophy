@@ -591,6 +591,28 @@ class Database():
 
         con.close()
 
+    def remove_phlawdrun_by_id(self, phlawdrun_id_to_delete):
+        
+        con = sqlite3.connect(self.dbname)
+        cur = con.cursor()
+
+        # first remove all the records from the sequence_matrix_include_map
+        cur.execute("DELETE FROM sequence_matrix_include_map WHERE sequence_id IN (" \
+                        "SELECT id FROM sequences WHERE phlawdrun_id == ?)", (phlawdrun_id_to_delete,))
+
+        # remove them from the exclude map
+        cur.execute("DELETE FROM sequence_matrix_exclude_map WHERE sequence_id IN (" \
+                        "SELECT id FROM sequences WHERE phlawdrun_id == ?)", (phlawdrun_id_to_delete,))
+
+        # now remove the sequences themselves
+        cur.execute("DELETE FROM sequences WHERE phlawdrun_id == ?", (phlawdrun_id_to_delete,))
+
+        # now remove the the phlawdrun record
+        cur.execute("DELETE FROM phlawdrun WHERE id == ?", (phlawdrun_id_to_delete,))
+
+        con.commit()
+        con.close()
+
     def update_default_matrix(self):
         if self.is_blocked:
             return
@@ -1241,15 +1263,24 @@ class Taxon():
         con.close()
         return children
 
-    def get_depth_n_children_by_rank(self, rank, name_class = "scientific name"):
+    def get_depth_n_children_by_rank(self, rank, name_class = "scientific name", excluded_taxa=None):
 
         con = sqlite3.connect(self.dbname)
         cur = con.cursor()
 
+        # get left and right values for excluded taxa, if any
+        sql_excl_string = ""
+        sql_subst_values = []
+        if excluded_taxa != None:
+            bad_values = [(tax.left_value, tax.right_value) for tax in excluded_taxa]
+            for lval, rval in bad_values:
+                sql_excl_string += "AND NOT (left_value >= ? AND right_value <= ?) "
+                sql_subst_values += lval, rval
+
         # get all records of desired rank that are children of this taxon
         cur.execute("SELECT name, ncbi_id FROM taxonomy WHERE node_rank == ? AND " \
-                        "name_class == ? AND left_value > ? AND right_value < ?;", \
-                        (rank, name_class, self.left_value, self.right_value))
+                        "name_class == ? AND left_value > ? AND right_value < ? " + sql_excl_string + ";", \
+                        (rank, name_class, self.left_value, self.right_value) + tuple(sql_subst_values))
         records = cur.fetchall()
         con.close()
 
