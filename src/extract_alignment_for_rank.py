@@ -5,7 +5,7 @@ from copy import deepcopy as copy
 if __name__ == "__main__":
 
     if len(sys.argv) < 4:
-        print "usage: extract_alignment_for_clade.py <db> rank=<rank> include=\"<tx1>,[<tx2>],...\" [exclude=\"<tx3>,<tx4>,...\"] [consense=<Y>]"
+        print "usage: extract_alignment_for_clade.py <db> rank=<rank> [include=\"<tx1>,<tx2>,...\"] [includefile=<file>] [exclude=\"<tx3>,<tx4>,...\"] [genes=\"<gene1>,<gene2>,...\"] [consense=<Y>]"
         sys.exit(0)
 
     # process command line args
@@ -16,6 +16,7 @@ if __name__ == "__main__":
     target_rank = ""
     cladenames = []
     exclude_names = []
+    gene_names = {}
 
     # set optional parameters
     for arg in sys.argv[2:]:
@@ -27,8 +28,20 @@ if __name__ == "__main__":
         elif argname == "include":
             cladenames = [n.strip() for n in argval.split(",")]
 
+        elif argname == "includefile":
+            includenamesfile = open(argval,"r")
+            cladenames = [n.strip() for n in includenamesfile.readlines()]
+            includenamesfile.close()
+
         elif argname == "exclude":
             exclude_names = [n.strip() for n in argval.split(",")]
+
+        elif argname == "genes":
+            gene_names_raw = [n.strip() for n in argval.split(",")]
+            gene_names = dict(zip(gene_names_raw,["",]*len(gene_names_raw)))
+
+#            print gene_names
+#            exit()
 
         elif argname == "consense":
             if argval == "Y":
@@ -51,16 +64,40 @@ if __name__ == "__main__":
 
     # get all included taxa of specified rank
     target_children_ncbi_ids = list()
+    print "including:"
     for name in cladenames:
+        
+        if name == "":
+            continue
 
-        print name
-        taxon = taxonomy.get_taxon_by_name(name)
+        try:
+            taxon = taxonomy.get_taxon_by_name(name)
+        except NameError:
+            continue
+
+        print "    " + name
+
         if taxon.node_rank != target_rank:
             # get children, add them to list
             target_children = taxon.get_depth_n_children_by_rank(target_rank,excluded_taxa=excluded_taxa)
-            target_children_ncbi_ids += list(zip(*target_children)[1])
+            if len(target_children) > 0:
+                target_children_ncbi_ids += list(zip(*target_children)[1])
         else:
             target_children_ncbi_ids += [taxon.ncbi_id]            
+
+    # find the identified phlawdruns (if any)
+    target_phlawdrun_ids = list()
+    if len(gene_names) > 0:
+        print "only including loci:"
+        for p_name, p_id in db.phlawdruns:
+            p_name = p_name.split(".",1)[0]
+            if p_name in gene_names:
+                print "    " + p_name
+                target_phlawdrun_ids.append(p_id)
+
+        # uniquify the list of ids and store it in a dict for fast access
+        target_phlawdrun_ids = set(target_phlawdrun_ids)
+        target_phlawdrun_ids = dict(zip(target_phlawdrun_ids,["",]*len(target_phlawdrun_ids)))
 
     if consense:
         # will hold all seqs for each taxon/gene, which will be used to build a consensus used as an exemplar
@@ -84,6 +121,10 @@ if __name__ == "__main__":
         # iterate over all child seqs simultaneously; faster than doing phlawdruns individually
         for sid in seq_ids:
             candidate = db.get_sequence_by_id(sid)
+
+            if len(target_phlawdrun_ids) > 0:
+                if candidate.phlawdrun_id not in target_phlawdrun_ids:
+                    continue
 
             if consense:
                 
@@ -111,6 +152,11 @@ if __name__ == "__main__":
             target_consensus_seqs = dict()
 
             for phlawdrun_id, phlawdrun_seqs in target_seqs.iteritems():
+
+                if len(phlawdrun_seqs) == 1:
+                    target_consensus_seqs[phlawdrun_id] = phlawdrun_seqs[0]
+                    continue
+
                 temp_path = "extract_seqs_TEMP"
                 try:
                     os.mkdir(temp_path)
