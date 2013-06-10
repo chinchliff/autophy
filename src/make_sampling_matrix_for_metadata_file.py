@@ -8,12 +8,12 @@ from copy import deepcopy
 
 if __name__ == "__main__":
 
-    if len(sys.argv) < 3:
-        print "usage: makesamplingmatrixfromautophymetadata <autophy_metadata_file> <outfile>"
+    if len(sys.argv) < 2:
+        print "usage: makesamplingmatrixfromautophymetadata <autophy_metadata_file>"
         sys.exit(0)
 
     infile = open(sys.argv[1],"r")
-    outfile = open(sys.argv[2],"w")
+    outfile = open(sys.argv[1].rsplit("metadata.csv",1)[0]+"sampling_matrix.csv","w")
 
     print "scanning for sampled loci"
     loci = list()

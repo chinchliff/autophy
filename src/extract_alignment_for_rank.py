@@ -5,7 +5,7 @@ from copy import deepcopy as copy
 if __name__ == "__main__":
 
     if len(sys.argv) < 4:
-        print "usage: extract_alignment_for_clade.py <db> rank=<rank> [include=\"<tx1>,<tx2>,...\"] [includefile=<file>] [exclude=\"<tx3>,<tx4>,...\"] [genes=\"<gene1>,<gene2>,...\"] [consense=<Y>]"
+        print "usage: extract_alignment_for_clade.py <db> rank=<rank> [include=\"<tx1>,<tx2>,...\"] [includefile=<file>] [exclude=\"<tx3>,<tx4>,...\"] [genes=\"<gene1>,<gene2>,...\"] [genesfile=<file>] [consense=<Y>]"
         sys.exit(0)
 
     # process command line args
@@ -40,8 +40,11 @@ if __name__ == "__main__":
             gene_names_raw = [n.strip() for n in argval.split(",")]
             gene_names = dict(zip(gene_names_raw,["",]*len(gene_names_raw)))
 
-#            print gene_names
-#            exit()
+        elif argname == "genesfile":
+            genenamesfile = open(argval,"r")
+            gene_names_raw = [n.strip() for n in genenamesfile.readlines()]
+            genenamesfile.close()
+            gene_names = dict(zip(gene_names_raw,["",]*len(gene_names_raw)))
 
         elif argname == "consense":
             if argval == "Y":
@@ -90,7 +93,7 @@ if __name__ == "__main__":
     if len(gene_names) > 0:
         print "only including loci:"
         for p_name, p_id in db.phlawdruns:
-            p_name = p_name.split(".",1)[0]
+            p_name = p_name.rsplit(".phlawd",1)[0]
             if p_name in gene_names:
                 print "    " + p_name
                 target_phlawdrun_ids.append(p_id)
@@ -143,7 +146,8 @@ if __name__ == "__main__":
 
                 else:
                     # record the seq if it is better than the prev recorded seq
-                    if len(candidate.seq_aligned) > len(target_exemplar_seqs[cur_seq.phlawdrun_id]):
+#                    if len(candidate.seq_aligned) > len(target_exemplar_seqs[cur_seq.phlawdrun_id]):
+                    if len(candidate.seq_aligned) > len(target_seqs[candidate.phlawdrun_id].seq_aligned):
                         target_seqs[candidate.phlawdrun_id] = candidate
 
         if consense:
