@@ -4,54 +4,71 @@ from copy import deepcopy as copy
 
 if __name__ == "__main__":
 
-    if len(sys.argv) < 4:
-        print "usage: extract_alignment_for_clade.py <db> rank=<rank> [include=\"<tx1>,<tx2>,...\"] [includefile=<file>] [exclude=\"<tx3>,<tx4>,...\"] [genes=\"<gene1>,<gene2>,...\"] [genesfile=<file>] [consense=<Y>]"
+    if len(sys.argv) < 2:
+        print "usage: extract_alignment_from_phlawddb.py <configfile>"
+
+#<db> rank=<rank> [include=\"<tx1>,<tx2>,...\"] [includefile=<file>] [exclude=\"<tx3>,<tx4>,...\"] [genes=\"<gene1>,<gene2>,...\"] [genesfile=<file>] [consense=<Y>]"
         sys.exit(0)
 
     # process command line args
-    dbname = sys.argv[1]
+#    dbname = sys.argv[1]
+
+    configfile = open(sys.argv[1])
 
     # initializing parameters
     consense = False
-    target_rank = ""
-    cladenames = []
+#    target_rank = ""
+    includes = {}
     exclude_names = []
     gene_names = {}
 
     # set optional parameters
-    for arg in sys.argv[2:]:
-        argname, argval = arg.split("=")
+    for line in configfile:
+        if len(line.strip()) < 1:
+            continue
 
-        if argname == "rank":
-            target_rank = argval
+        argname, argval = line.split("=")
 
-        elif argname == "include":
-            cladenames = [n.strip() for n in argval.split(",")]
+        if argname == "db":
+            dbname = argval.strip()
 
-        elif argname == "includefile":
-            includenamesfile = open(argval,"r")
-            cladenames = [n.strip() for n in includenamesfile.readlines()]
-            includenamesfile.close()
+        if argname == "include":
+            rank, cladestr = [n.strip() for n in argval.split(":")]
+            cladenames = [n.strip() for n in cladestr.split(",")]
+            if includes.has_key(rank):
+                includes[rank] += cladenames
+            else:
+                includes[rank] = cladenames
+
+#        elif argname == "includefile":
+#            includenamesfile = open(argval,"r")
+#            cladenames = [n.strip() for n in includenamesfile.readlines()]
+#            includenamesfile.close()
 
         elif argname == "exclude":
+#            excludestr [n.strip() for n in argval.split(":")]
             exclude_names = [n.strip() for n in argval.split(",")]
+#            if excludes.haskey(rank):
+#                excludes[rank] += cladenames
+#            else:
+#                excludes[rank] = cladenames
 
         elif argname == "genes":
             gene_names_raw = [n.strip() for n in argval.split(",")]
             gene_names = dict(zip(gene_names_raw,["",]*len(gene_names_raw)))
 
-        elif argname == "genesfile":
-            genenamesfile = open(argval,"r")
-            gene_names_raw = [n.strip() for n in genenamesfile.readlines()]
-            genenamesfile.close()
-            gene_names = dict(zip(gene_names_raw,["",]*len(gene_names_raw)))
+#        elif argname == "genesfile":
+#            genenamesfile = open(argval,"r")
+#            gene_names_raw = [n.strip() for n in genenamesfile.readlines()]
+#            genenamesfile.close()
+#            gene_names = dict(zip(gene_names_raw,["",]*len(gene_names_raw)))
 
         elif argname == "consense":
             if argval == "Y":
                 consense = True
 
-    assert(len(cladenames) > 0)
-    assert(target_rank != "")
+    assert(len(includes) > 0)
+#    assert(target_rank != "")
 
     db = autophy.Database(dbname)
     taxonomy = autophy.Taxonomy(dbname)
@@ -68,25 +85,26 @@ if __name__ == "__main__":
     # get all included taxa of specified rank
     target_children_ncbi_ids = list()
     print "including:"
-    for name in cladenames:
-        
-        if name == "":
-            continue
+    for target_rank, cladenames in includes.iteritems():
+        for name in cladenames:
 
-        try:
-            taxon = taxonomy.get_taxon_by_name(name)
-        except NameError:
-            continue
+            if name == "":
+                continue
 
-        print "    " + name
+            try:
+                taxon = taxonomy.get_taxon_by_name(name)
+            except NameError:
+                continue
 
-        if taxon.node_rank != target_rank:
-            # get children, add them to list
-            target_children = taxon.get_depth_n_children_by_rank(target_rank,excluded_taxa=excluded_taxa)
-            if len(target_children) > 0:
-                target_children_ncbi_ids += list(zip(*target_children)[1])
-        else:
-            target_children_ncbi_ids += [taxon.ncbi_id]            
+            print "    " + target_rank + " in " + name
+
+            if taxon.node_rank != target_rank:
+                # get children, add them to list
+                target_children = taxon.get_depth_n_children_by_rank(target_rank,excluded_taxa=excluded_taxa)
+                if len(target_children) > 0:
+                    target_children_ncbi_ids += list(zip(*target_children)[1])
+            else:
+                target_children_ncbi_ids += [taxon.ncbi_id]            
 
     # find the identified phlawdruns (if any)
     target_phlawdrun_ids = list()
