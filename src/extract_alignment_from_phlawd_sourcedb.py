@@ -67,6 +67,9 @@ if __name__ == "__main__":
             if argval == "Y":
                 consense = True
 
+        else:
+            print "unrecognized command: \"" + argname + "\""
+
     assert(len(includes) > 0)
 #    assert(target_rank != "")
 
