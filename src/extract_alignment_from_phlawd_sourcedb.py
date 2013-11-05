@@ -32,7 +32,7 @@ if __name__ == "__main__":
         if argname == "db":
             dbname = argval.strip()
 
-        if argname == "include":
+        elif argname == "include":
             rank, cladestr = [n.strip() for n in argval.split(":")]
             cladenames = [n.strip() for n in cladestr.split(",")]
             if includes.has_key(rank):
