@@ -10,14 +10,10 @@ if __name__ == "__main__":
 #<db> rank=<rank> [include=\"<tx1>,<tx2>,...\"] [includefile=<file>] [exclude=\"<tx3>,<tx4>,...\"] [genes=\"<gene1>,<gene2>,...\"] [genesfile=<file>] [consense=<Y>]"
         sys.exit(0)
 
-    # process command line args
-#    dbname = sys.argv[1]
-
     configfile = open(sys.argv[1])
 
     # initializing parameters
     consense = False
-#    target_rank = ""
     includes = {}
     exclude_names = []
     gene_names = {}
@@ -27,7 +23,7 @@ if __name__ == "__main__":
         if len(line.strip()) < 1:
             continue
 
-        argname, argval = line.split("=")
+        argname, argval = [s.strip() for s in line.split("=")]
 
         if argname == "db":
             dbname = argval.strip()
@@ -40,28 +36,12 @@ if __name__ == "__main__":
             else:
                 includes[rank] = cladenames
 
-#        elif argname == "includefile":
-#            includenamesfile = open(argval,"r")
-#            cladenames = [n.strip() for n in includenamesfile.readlines()]
-#            includenamesfile.close()
-
         elif argname == "exclude":
-#            excludestr [n.strip() for n in argval.split(":")]
             exclude_names = [n.strip() for n in argval.split(",")]
-#            if excludes.haskey(rank):
-#                excludes[rank] += cladenames
-#            else:
-#                excludes[rank] = cladenames
 
         elif argname == "genes":
             gene_names_raw = [n.strip() for n in argval.split(",")]
             gene_names = dict(zip(gene_names_raw,["",]*len(gene_names_raw)))
-
-#        elif argname == "genesfile":
-#            genenamesfile = open(argval,"r")
-#            gene_names_raw = [n.strip() for n in genenamesfile.readlines()]
-#            genenamesfile.close()
-#            gene_names = dict(zip(gene_names_raw,["",]*len(gene_names_raw)))
 
         elif argname == "consense":
             if argval == "Y":
@@ -71,7 +51,6 @@ if __name__ == "__main__":
             print "unrecognized command: \"" + argname + "\""
 
     assert(len(includes) > 0)
-#    assert(target_rank != "")
 
     db = autophy.Database(dbname)
     taxonomy = autophy.Taxonomy(dbname)
@@ -272,15 +251,32 @@ if __name__ == "__main__":
         if len(curtax_seqs) < 1:
             continue
         else:
-            alignment.write(re.sub(r"[ ,./;'\[\]<>?|:\"\\{}!@#$%^&*()-+=~`]+", "_", exemplified_taxon) + " ")
+#            alignment.write(re.sub(r"[ ,./;'\[\]<>?|:\"\\{}!@#$%^&*()-+=~`]+", "_", exemplified_taxon) + " ")
+            # replace sequences of illegal name characters with an underscore
+#            alignment.write(re.sub(r"[^A-Za-z0-9\-]+", "_", exemplified_taxon) + " ")
+            taxname = re.sub(r"[^A-Za-z0-9\-]+", "_", exemplified_taxon)
 
         # for every phlawdrun, write a seq if we have one, or missing data if not
+        seq = ""
         for pid in phlawdrun_lengths.iterkeys():
             if pid in curtax_seqs.keys():
-                alignment.write(curtax_seqs[pid].seq_aligned)
+#                alignment.write(curtax_seqs[pid].seq_aligned)
+                # replace *individual* illegal nucleotide coding characters with a dash (don't change sequence length by replacing series)
+#                alignment.write(re.sub(r"[^AaBbCcDdGgHhKkMmNnRrSsTtVvWwYy\-]","-",curtax_seqs[pid].seq_aligned))
+                seq += re.sub(r"[^AaBbCcDdGgHhKkMmNnRrSsTtVvWwYy\-]","-",curtax_seqs[pid].seq_aligned)
             else:
-                alignment.write("-"*phlawdrun_lengths[pid])
-        alignment.write("\n")
+ #               alignment.write("-"*phlawdrun_lengths[pid])
+               seq += "-" * phlawdrun_lengths[pid]
+
+        # check if the seq is completely empty
+        is_empty = True
+        for n in seq:
+            if n != "-":
+                is_empty = False
+                break
+            
+        if not is_empty:
+            alignment.write(taxname + " " + seq + "\n")
 
     # write partitions file
     partfile_name = fname_base + "_partitions.part"
