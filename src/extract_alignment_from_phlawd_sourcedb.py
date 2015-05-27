@@ -251,27 +251,22 @@ if __name__ == "__main__":
         if len(curtax_seqs) < 1:
             continue
         else:
-#            alignment.write(re.sub(r"[ ,./;'\[\]<>?|:\"\\{}!@#$%^&*()-+=~`]+", "_", exemplified_taxon) + " ")
             # replace sequences of illegal name characters with an underscore
-#            alignment.write(re.sub(r"[^A-Za-z0-9\-]+", "_", exemplified_taxon) + " ")
-            taxname = re.sub(r"[^A-Za-z0-9\-]+", "_", exemplified_taxon)
+            taxname = re.sub(r"[^A-Za-z0-9\-]+", "_", exemplified_taxon).strip("_")
 
         # for every phlawdrun, write a seq if we have one, or missing data if not
         seq = ""
         for pid in phlawdrun_lengths.iterkeys():
             if pid in curtax_seqs.keys():
-#                alignment.write(curtax_seqs[pid].seq_aligned)
                 # replace *individual* illegal nucleotide coding characters with a dash (don't change sequence length by replacing series)
-#                alignment.write(re.sub(r"[^AaBbCcDdGgHhKkMmNnRrSsTtVvWwYy\-]","-",curtax_seqs[pid].seq_aligned))
                 seq += re.sub(r"[^AaBbCcDdGgHhKkMmNnRrSsTtVvWwYy\-]","-",curtax_seqs[pid].seq_aligned)
             else:
- #               alignment.write("-"*phlawdrun_lengths[pid])
                seq += "-" * phlawdrun_lengths[pid]
 
         # check if the seq is completely empty
         is_empty = True
         for n in seq:
-            if n != "-":
+            if n != "-" and n != "?" and n.lower() != "n":
                 is_empty = False
                 break
             
